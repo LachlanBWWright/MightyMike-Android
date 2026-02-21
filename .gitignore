@@ -23,6 +23,10 @@ cache/
 android/.gradle/
 android/app/build/
 android/local.properties
+android/app/.cxx/
+
+# SDL Java bridge files (generated from extern/SDL at build time - not committed)
+android/app/src/main/java/org/libsdl/app/*.java
 
 # CodeQL
 _codeql_detected_source_root
