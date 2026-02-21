@@ -74,3 +74,44 @@ If you want to build the game **manually** instead, the rest of this document de
     If you'd like to enable runtime sanitizers, append `-DSANITIZE=1` to the **first** `cmake` call above.
 1. The game gets built in `build/MightyMike`. Enjoy!
 
+## How to build the game for Android
+
+### Prerequisites
+
+- Android Studio (or Android SDK + NDK + CMake installed separately)
+- Android NDK r27+ (`ndk;27.3.13750724` or later)
+- CMake 3.22+ (install via Android SDK: `cmake;3.22.1`)
+- JDK 17
+- SDL3 source code (cloned to `extern/SDL`)
+
+### Steps
+
+1. Clone the repo **recursively**:
+    ```
+    git clone --recurse-submodules https://github.com/LachlanBWWright/MightyMike-Android
+    cd MightyMike-Android
+    ```
+1. Clone SDL3 source into `extern/SDL`:
+    ```
+    git clone --depth 1 https://github.com/libsdl-org/SDL.git extern/SDL
+    ```
+1. Copy SDL3's Java bridge files into the Android project:
+    ```
+    mkdir -p android/app/src/main/java/org/libsdl/app
+    cp extern/SDL/android-project/app/src/main/java/org/libsdl/app/*.java \
+       android/app/src/main/java/org/libsdl/app/
+    ```
+1. Build the debug APK using the Gradle wrapper:
+    ```
+    cd android
+    ./gradlew assembleDebug
+    ```
+1. The APK is produced at `android/app/build/outputs/apk/debug/app-debug.apk`.
+
+### Notes
+
+- The game uses OpenGL ES 3.0 on Android (requires Android 4.3+, minSdk is set to 24).
+- Game data files (`Data/`) are packaged as APK assets and extracted to internal storage on first run.
+- Touch controls are provided: virtual joystick on the left, action buttons on the right.
+- The CI/CD workflow (`.github/workflows/AndroidBuild.yml`) builds and uploads the APK automatically on every push and pull request.
+
