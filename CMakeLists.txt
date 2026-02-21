@@ -88,13 +88,19 @@ if(NOT BUILD_SDL_FROM_SOURCE)
 	find_package(SDL3 CONFIG REQUIRED)
 	message("Found pre-built SDL3")
 else()
-	if(NOT DEFINED SDL3_DIR)
-		set(SDL3_DIR "${CMAKE_SOURCE_DIR}/extern/SDL")
+	# Use SDL3_SRC_DIR to avoid creating a local SDL3_DIR variable that would shadow
+	# the CACHE update below (CMake's CACHE FORCE does not override a local variable).
+	if(DEFINED SDL3_DIR)
+		set(SDL3_SRC_DIR "${SDL3_DIR}")
+	else()
+		set(SDL3_SRC_DIR "${CMAKE_SOURCE_DIR}/extern/SDL")
 	endif()
-	set(SDL3_SRC_DIR "${SDL3_DIR}")
 	message("Building SDL3 from source: " ${SDL3_SRC_DIR})
 	add_subdirectory("${SDL3_SRC_DIR}" "${CMAKE_BINARY_DIR}/SDL3_bin" EXCLUDE_FROM_ALL)
-	# Update SDL3_DIR so submodule find_package(SDL3) calls resolve correctly
+	# Set SDL3_DIR to the binary dir so subsequent find_package(SDL3) calls
+	# (e.g. from extern/Pomme) can find SDL3Config.cmake there.
+	# Since SDL3_DIR has no prior local-scope binding, this CACHE set is immediately
+	# visible in the local scope too.
 	set(SDL3_DIR "${CMAKE_BINARY_DIR}/SDL3_bin" CACHE PATH "" FORCE)
 endif()
 

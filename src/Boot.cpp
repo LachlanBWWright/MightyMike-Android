@@ -23,10 +23,7 @@ extern "C"
 }
 
 #ifdef __ANDROID__
-#include <filesystem>
 #include <unistd.h>
-#include <sys/stat.h>
-#include <cerrno>
 
 static const char* kAllDataFiles[] = {
 	"Shapes/win.shapes",
@@ -294,7 +291,7 @@ static fs::path FindGameData(const char* executablePath)
 	if (!ExtractGameDataIfNeeded(internalPath))
 		throw std::runtime_error("Failed to extract game data from APK.");
 
-	dataPath = std::filesystem::path(internalPath) / "Data";
+	dataPath = fs::path(internalPath) / "Data";
 
 	gDataSpec = Pomme::Files::HostPathToFSSpec(dataPath / "System");
 
@@ -380,7 +377,7 @@ static void Boot(int argc, char** argv)
 	if (internalPath)
 	{
 		std::error_code ec;
-		std::filesystem::create_directories(std::string(internalPath) + "/.config", ec);
+		fs::create_directories(fs::path(internalPath) / ".config", ec);
 		if (ec)
 		{
 			SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,

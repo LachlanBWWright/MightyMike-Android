@@ -1,0 +1,156 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"childIndexes" : 
+					[
+						1,
+						2
+					],
+					"jsonFile" : "directory-.-Debug-f5ebdc15457944623624.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.6.0"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						0
+					]
+				},
+				{
+					"build" : "SDL3_bin",
+					"jsonFile" : "directory-SDL3_bin-Debug-67cf8ecbc36e763c5f91.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.16"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 1,
+					"source" : "extern/SDL",
+					"targetIndexes" : 
+					[
+						2,
+						3,
+						4
+					]
+				},
+				{
+					"build" : "extern/Pomme",
+					"jsonFile" : "directory-extern.Pomme-Debug-5ac37ceaf0554b2a65fc.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.13"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 2,
+					"source" : "extern/Pomme",
+					"targetIndexes" : 
+					[
+						1
+					]
+				}
+			],
+			"name" : "Debug",
+			"projects" : 
+			[
+				{
+					"childIndexes" : 
+					[
+						1,
+						2
+					],
+					"directoryIndexes" : 
+					[
+						0
+					],
+					"name" : "MightyMike",
+					"targetIndexes" : 
+					[
+						0
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						1
+					],
+					"name" : "SDL3",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						2,
+						3,
+						4
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						2
+					],
+					"name" : "Pomme",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						1
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 0,
+					"id" : "MightyMike::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-MightyMike-Debug-7f8159057399031df33b.json",
+					"name" : "MightyMike",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 2,
+					"id" : "Pomme::@4bed7659774468e94699",
+					"jsonFile" : "target-Pomme-Debug-5221f7693baf75606546.json",
+					"name" : "Pomme",
+					"projectIndex" : 2
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "SDL3-shared::@fd2d1b8161f0e71451a1",
+					"jsonFile" : "target-SDL3-shared-Debug-b8ea8d20dc452bef189f.json",
+					"name" : "SDL3-shared",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "SDL3_test::@fd2d1b8161f0e71451a1",
+					"jsonFile" : "target-SDL3_test-Debug-a847969f90821b6d8b95.json",
+					"name" : "SDL3_test",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "SDL_uclibc::@fd2d1b8161f0e71451a1",
+					"jsonFile" : "target-SDL_uclibc-Debug-c471121122e692f4a37b.json",
+					"name" : "SDL_uclibc",
+					"projectIndex" : 1
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "/home/runner/work/MightyMike-Android/MightyMike-Android/android/app/.cxx/Debug/735t3806/arm64-v8a",
+		"source" : "/home/runner/work/MightyMike-Android/MightyMike-Android"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 7
+	}
+}

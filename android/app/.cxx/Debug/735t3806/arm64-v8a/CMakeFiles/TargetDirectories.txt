@@ -1,0 +1,11 @@
+/home/runner/work/MightyMike-Android/MightyMike-Android/android/app/.cxx/Debug/735t3806/arm64-v8a/CMakeFiles/MightyMike.dir
+/home/runner/work/MightyMike-Android/MightyMike-Android/android/app/.cxx/Debug/735t3806/arm64-v8a/CMakeFiles/edit_cache.dir
+/home/runner/work/MightyMike-Android/MightyMike-Android/android/app/.cxx/Debug/735t3806/arm64-v8a/CMakeFiles/rebuild_cache.dir
+/home/runner/work/MightyMike-Android/MightyMike-Android/android/app/.cxx/Debug/735t3806/arm64-v8a/SDL3_bin/CMakeFiles/SDL3-shared.dir
+/home/runner/work/MightyMike-Android/MightyMike-Android/android/app/.cxx/Debug/735t3806/arm64-v8a/SDL3_bin/CMakeFiles/SDL3_test.dir
+/home/runner/work/MightyMike-Android/MightyMike-Android/android/app/.cxx/Debug/735t3806/arm64-v8a/SDL3_bin/CMakeFiles/SDL_uclibc.dir
+/home/runner/work/MightyMike-Android/MightyMike-Android/android/app/.cxx/Debug/735t3806/arm64-v8a/SDL3_bin/CMakeFiles/edit_cache.dir
+/home/runner/work/MightyMike-Android/MightyMike-Android/android/app/.cxx/Debug/735t3806/arm64-v8a/SDL3_bin/CMakeFiles/rebuild_cache.dir
+/home/runner/work/MightyMike-Android/MightyMike-Android/android/app/.cxx/Debug/735t3806/arm64-v8a/extern/Pomme/CMakeFiles/Pomme.dir
+/home/runner/work/MightyMike-Android/MightyMike-Android/android/app/.cxx/Debug/735t3806/arm64-v8a/extern/Pomme/CMakeFiles/edit_cache.dir
+/home/runner/work/MightyMike-Android/MightyMike-Android/android/app/.cxx/Debug/735t3806/arm64-v8a/extern/Pomme/CMakeFiles/rebuild_cache.dir

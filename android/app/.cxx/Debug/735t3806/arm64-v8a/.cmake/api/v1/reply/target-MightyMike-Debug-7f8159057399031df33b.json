@@ -1,0 +1,1174 @@
+{
+	"artifacts" : 
+	[
+		{
+			"path" : "/home/runner/work/MightyMike-Android/MightyMike-Android/android/app/build/intermediates/cxx/Debug/735t3806/obj/arm64-v8a/libmain.so"
+		}
+	],
+	"backtrace" : 1,
+	"backtraceGraph" : 
+	{
+		"commands" : 
+		[
+			"add_library",
+			"target_link_libraries",
+			"target_compile_options",
+			"add_compile_definitions",
+			"target_compile_definitions",
+			"target_include_directories"
+		],
+		"files" : 
+		[
+			"CMakeLists.txt"
+		],
+		"nodes" : 
+		[
+			{
+				"file" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 141,
+				"parent" : 0
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 227,
+				"parent" : 0
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 239,
+				"parent" : 0
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 232,
+				"parent" : 0
+			},
+			{
+				"command" : 2,
+				"file" : 0,
+				"line" : 165,
+				"parent" : 0
+			},
+			{
+				"command" : 3,
+				"file" : 0,
+				"line" : 155,
+				"parent" : 0
+			},
+			{
+				"command" : 4,
+				"file" : 0,
+				"line" : 161,
+				"parent" : 0
+			},
+			{
+				"command" : 3,
+				"file" : 0,
+				"line" : 63,
+				"parent" : 0
+			},
+			{
+				"command" : 5,
+				"file" : 0,
+				"line" : 149,
+				"parent" : 0
+			}
+		]
+	},
+	"compileGroups" : 
+	[
+		{
+			"compileCommandFragments" : 
+			[
+				{
+					"fragment" : "-g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=gnu++20 -fPIC"
+				},
+				{
+					"backtrace" : 5,
+					"fragment" : "-fexceptions"
+				},
+				{
+					"backtrace" : 5,
+					"fragment" : "-Wall"
+				},
+				{
+					"backtrace" : 5,
+					"fragment" : "-Wextra"
+				},
+				{
+					"backtrace" : 5,
+					"fragment" : "-Wshadow"
+				},
+				{
+					"backtrace" : 5,
+					"fragment" : "-Werror=return-type"
+				},
+				{
+					"backtrace" : 5,
+					"fragment" : "-Wno-multichar"
+				},
+				{
+					"backtrace" : 5,
+					"fragment" : "-Wno-unknown-pragmas"
+				},
+				{
+					"backtrace" : 5,
+					"fragment" : "-Wstrict-aliasing=2"
+				}
+			],
+			"defines" : 
+			[
+				{
+					"backtrace" : 6,
+					"define" : "GLRENDER"
+				},
+				{
+					"backtrace" : 7,
+					"define" : "GL_SILENCE_DEPRECATION"
+				},
+				{
+					"define" : "MightyMike_EXPORTS"
+				},
+				{
+					"backtrace" : 8,
+					"define" : "POMME_CASE_SENSITIVE_FSSPEC=1"
+				},
+				{
+					"backtrace" : 6,
+					"define" : "_DEBUG"
+				}
+			],
+			"includes" : 
+			[
+				{
+					"backtrace" : 9,
+					"path" : "/home/runner/work/MightyMike-Android/MightyMike-Android/src/Headers"
+				},
+				{
+					"backtrace" : 4,
+					"path" : "/home/runner/work/MightyMike-Android/MightyMike-Android/android/app/.cxx/Debug/735t3806/arm64-v8a/SDL3_bin/include-revision"
+				},
+				{
+					"backtrace" : 4,
+					"path" : "/home/runner/work/MightyMike-Android/MightyMike-Android/extern/SDL/include"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "/home/runner/work/MightyMike-Android/MightyMike-Android/extern/Pomme/src"
+				}
+			],
+			"language" : "CXX",
+			"languageStandard" : 
+			{
+				"backtraces" : 
+				[
+					1
+				],
+				"standard" : "20"
+			},
+			"sourceIndexes" : 
+			[
+				0
+			],
+			"sysroot" : 
+			{
+				"path" : "/usr/local/lib/android/sdk/ndk/27.3.13750724/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+			}
+		},
+		{
+			"compileCommandFragments" : 
+			[
+				{
+					"fragment" : "-g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -std=gnu17 -fPIC"
+				},
+				{
+					"backtrace" : 5,
+					"fragment" : "-fexceptions"
+				},
+				{
+					"backtrace" : 5,
+					"fragment" : "-Wall"
+				},
+				{
+					"backtrace" : 5,
+					"fragment" : "-Wextra"
+				},
+				{
+					"backtrace" : 5,
+					"fragment" : "-Wshadow"
+				},
+				{
+					"backtrace" : 5,
+					"fragment" : "-Werror=return-type"
+				},
+				{
+					"backtrace" : 5,
+					"fragment" : "-Wno-multichar"
+				},
+				{
+					"backtrace" : 5,
+					"fragment" : "-Wno-unknown-pragmas"
+				},
+				{
+					"backtrace" : 5,
+					"fragment" : "-Wstrict-aliasing=2"
+				}
+			],
+			"defines" : 
+			[
+				{
+					"backtrace" : 6,
+					"define" : "GLRENDER"
+				},
+				{
+					"backtrace" : 7,
+					"define" : "GL_SILENCE_DEPRECATION"
+				},
+				{
+					"define" : "MightyMike_EXPORTS"
+				},
+				{
+					"backtrace" : 8,
+					"define" : "POMME_CASE_SENSITIVE_FSSPEC=1"
+				},
+				{
+					"backtrace" : 6,
+					"define" : "_DEBUG"
+				}
+			],
+			"includes" : 
+			[
+				{
+					"backtrace" : 9,
+					"path" : "/home/runner/work/MightyMike-Android/MightyMike-Android/src/Headers"
+				},
+				{
+					"backtrace" : 4,
+					"path" : "/home/runner/work/MightyMike-Android/MightyMike-Android/android/app/.cxx/Debug/735t3806/arm64-v8a/SDL3_bin/include-revision"
+				},
+				{
+					"backtrace" : 4,
+					"path" : "/home/runner/work/MightyMike-Android/MightyMike-Android/extern/SDL/include"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "/home/runner/work/MightyMike-Android/MightyMike-Android/extern/Pomme/src"
+				}
+			],
+			"language" : "C",
+			"languageStandard" : 
+			{
+				"backtraces" : 
+				[
+					1
+				],
+				"standard" : "17"
+			},
+			"sourceIndexes" : 
+			[
+				1,
+				2,
+				3,
+				4,
+				5,
+				6,
+				7,
+				8,
+				9,
+				10,
+				11,
+				12,
+				13,
+				14,
+				15,
+				16,
+				17,
+				18,
+				19,
+				20,
+				21,
+				22,
+				23,
+				24,
+				25,
+				26,
+				27,
+				28,
+				29,
+				30,
+				31,
+				32,
+				33,
+				34,
+				35,
+				36,
+				37,
+				38,
+				39,
+				78,
+				79,
+				80,
+				81,
+				82,
+				83,
+				84,
+				85,
+				86,
+				87,
+				88,
+				89,
+				90,
+				91,
+				92,
+				93,
+				94,
+				95,
+				96,
+				97,
+				98,
+				99,
+				100,
+				101
+			],
+			"sysroot" : 
+			{
+				"path" : "/usr/local/lib/android/sdk/ndk/27.3.13750724/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+			}
+		}
+	],
+	"dependencies" : 
+	[
+		{
+			"backtrace" : 4,
+			"id" : "SDL3-shared::@fd2d1b8161f0e71451a1"
+		},
+		{
+			"backtrace" : 3,
+			"id" : "Pomme::@4bed7659774468e94699"
+		}
+	],
+	"id" : "MightyMike::@6890427a1f51a3e7e1df",
+	"link" : 
+	{
+		"commandFragments" : 
+		[
+			{
+				"fragment" : "-Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--no-undefined-version -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments",
+				"role" : "flags"
+			},
+			{
+				"backtrace" : 2,
+				"fragment" : "-lm",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 3,
+				"fragment" : "extern/Pomme/libPomme.a",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 3,
+				"fragment" : "-lGLESv3",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 3,
+				"fragment" : "-lEGL",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 3,
+				"fragment" : "-llog",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 3,
+				"fragment" : "-landroid",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 4,
+				"fragment" : "/home/runner/work/MightyMike-Android/MightyMike-Android/android/app/build/intermediates/cxx/Debug/735t3806/obj/arm64-v8a/libSDL3.so",
+				"role" : "libraries"
+			},
+			{
+				"fragment" : "-latomic -lm",
+				"role" : "libraries"
+			}
+		],
+		"language" : "CXX",
+		"sysroot" : 
+		{
+			"path" : "/usr/local/lib/android/sdk/ndk/27.3.13750724/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+		}
+	},
+	"name" : "MightyMike",
+	"nameOnDisk" : "libmain.so",
+	"paths" : 
+	{
+		"build" : ".",
+		"source" : "."
+	},
+	"sourceGroups" : 
+	[
+		{
+			"name" : "",
+			"sourceIndexes" : 
+			[
+				0
+			]
+		},
+		{
+			"name" : "Drivers",
+			"sourceIndexes" : 
+			[
+				1,
+				2,
+				3,
+				4,
+				5,
+				6,
+				7,
+				8,
+				9,
+				10
+			]
+		},
+		{
+			"name" : "Enemies\\Bargain",
+			"sourceIndexes" : 
+			[
+				11,
+				12,
+				13,
+				14,
+				15,
+				16,
+				17
+			]
+		},
+		{
+			"name" : "Enemies\\Candy",
+			"sourceIndexes" : 
+			[
+				18,
+				19,
+				20,
+				21,
+				22,
+				23
+			]
+		},
+		{
+			"name" : "Enemies\\Clown",
+			"sourceIndexes" : 
+			[
+				24,
+				25,
+				26,
+				27
+			]
+		},
+		{
+			"name" : "Enemies\\Fairy",
+			"sourceIndexes" : 
+			[
+				28,
+				29,
+				30,
+				31,
+				32,
+				33
+			]
+		},
+		{
+			"name" : "Enemies\\Jurassic",
+			"sourceIndexes" : 
+			[
+				34,
+				35,
+				36,
+				37,
+				38,
+				39
+			]
+		},
+		{
+			"name" : "Headers",
+			"sourceIndexes" : 
+			[
+				40,
+				41,
+				42,
+				43,
+				44,
+				45,
+				46,
+				47,
+				48,
+				49,
+				50,
+				51,
+				52,
+				53,
+				54,
+				55,
+				56,
+				57,
+				58,
+				59,
+				60,
+				61,
+				62,
+				63,
+				64,
+				65,
+				66,
+				67,
+				68,
+				69,
+				70,
+				71,
+				72,
+				73,
+				74,
+				75,
+				76,
+				77
+			]
+		},
+		{
+			"name" : "Heart",
+			"sourceIndexes" : 
+			[
+				78,
+				79,
+				80,
+				81,
+				82,
+				83,
+				84,
+				85,
+				86,
+				87,
+				88,
+				89,
+				90,
+				91
+			]
+		},
+		{
+			"name" : "MeAndMo",
+			"sourceIndexes" : 
+			[
+				92,
+				93,
+				94,
+				95,
+				96
+			]
+		},
+		{
+			"name" : "Misc",
+			"sourceIndexes" : 
+			[
+				97,
+				98,
+				99,
+				100
+			]
+		},
+		{
+			"name" : "Playfield",
+			"sourceIndexes" : 
+			[
+				101
+			]
+		}
+	],
+	"sources" : 
+	[
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "src/Boot.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Drivers/Animation.c",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Drivers/Font.c",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Drivers/GLRender.c",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Drivers/ObjectManager.c",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Drivers/Palette.c",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Drivers/SDLRender.c",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Drivers/Shape.c",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Drivers/Sound.c",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Drivers/TGA.c",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Drivers/TouchControls.c",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Bargain/Enemy_8Ball.c",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Bargain/Enemy_Battery.c",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Bargain/Enemy_Robot.c",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Bargain/Enemy_Slinky.c",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Bargain/Enemy_Top.c",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Bargain/Enemy_doggy.c",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Bargain/RaceCar.c",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Candy/Enemy_Carmel.c",
+			"sourceGroupIndex" : 3
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Candy/Enemy_ChocBunny.c",
+			"sourceGroupIndex" : 3
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Candy/Enemy_GBread.c",
+			"sourceGroupIndex" : 3
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Candy/Enemy_GummyBear.c",
+			"sourceGroupIndex" : 3
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Candy/Enemy_LemonDrop.c",
+			"sourceGroupIndex" : 3
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Candy/Enemy_Mint.c",
+			"sourceGroupIndex" : 3
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Clown/Enemy_Clown.c",
+			"sourceGroupIndex" : 4
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Clown/Enemy_ClownCar.c",
+			"sourceGroupIndex" : 4
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Clown/Enemy_FlowerClown.c",
+			"sourceGroupIndex" : 4
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Clown/Enemy_HatBunny.c",
+			"sourceGroupIndex" : 4
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Fairy/Enemy_BBWolf.c",
+			"sourceGroupIndex" : 5
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Fairy/Enemy_Dragon.c",
+			"sourceGroupIndex" : 5
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Fairy/Enemy_Giant.c",
+			"sourceGroupIndex" : 5
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Fairy/Enemy_Soldier.c",
+			"sourceGroupIndex" : 5
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Fairy/Enemy_Spider.c",
+			"sourceGroupIndex" : 5
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Fairy/Enemy_Witch.c",
+			"sourceGroupIndex" : 5
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Jurassic/Enemy_BabyDino.c",
+			"sourceGroupIndex" : 6
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Jurassic/Enemy_CaveMan.c",
+			"sourceGroupIndex" : 6
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Jurassic/Enemy_DinoEgg.c",
+			"sourceGroupIndex" : 6
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Jurassic/Enemy_Rex.c",
+			"sourceGroupIndex" : 6
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Jurassic/Enemy_Triceratops.c",
+			"sourceGroupIndex" : 6
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Enemies/Jurassic/Enemy_Turtle.c",
+			"sourceGroupIndex" : 6
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/bonus.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/cinema.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/collision.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/enemy.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/enemy2.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/enemy3.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/enemy4.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/enemy5.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/equates.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/externs.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/font.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/framebufferfilter.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/infobar.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/input.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/io.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/main.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/misc.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/miscanims.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/myglobals.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/myguy.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/myguy2.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/object.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/objecttypes.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/picture.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/playfield.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/racecar.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/renderdrivers.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/shape.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/sound2.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/spin.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/structures.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/tga.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/touchcontrols.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/traps.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/triggers.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/version.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/weapon.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"path" : "src/Headers/window.h",
+			"sourceGroupIndex" : 7
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Heart/Cinema.c",
+			"sourceGroupIndex" : 8
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Heart/Collision.c",
+			"sourceGroupIndex" : 8
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Heart/FilterThreads.c",
+			"sourceGroupIndex" : 8
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Heart/FramebufferFilter.c",
+			"sourceGroupIndex" : 8
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Heart/IO.c",
+			"sourceGroupIndex" : 8
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Heart/Infobar.c",
+			"sourceGroupIndex" : 8
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Heart/Input.c",
+			"sourceGroupIndex" : 8
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Heart/InputDefaults.c",
+			"sourceGroupIndex" : 8
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Heart/Main.c",
+			"sourceGroupIndex" : 8
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Heart/Misc.c",
+			"sourceGroupIndex" : 8
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Heart/Picture.c",
+			"sourceGroupIndex" : 8
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Heart/SettingsScreen.c",
+			"sourceGroupIndex" : 8
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Heart/Spin.c",
+			"sourceGroupIndex" : 8
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Heart/Window.c",
+			"sourceGroupIndex" : 8
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/MeAndMo/Enemy.c",
+			"sourceGroupIndex" : 9
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/MeAndMo/MyGuy.c",
+			"sourceGroupIndex" : 9
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/MeAndMo/MyGuy2.c",
+			"sourceGroupIndex" : 9
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/MeAndMo/Weapon.c",
+			"sourceGroupIndex" : 9
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/MeAndMo/Weapon2.c",
+			"sourceGroupIndex" : 9
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Misc/Bonus.c",
+			"sourceGroupIndex" : 10
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Misc/MiscAnims.c",
+			"sourceGroupIndex" : 10
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Misc/Traps.c",
+			"sourceGroupIndex" : 10
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Misc/Triggers.c",
+			"sourceGroupIndex" : 10
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/Playfield/Playfield.c",
+			"sourceGroupIndex" : 11
+		}
+	],
+	"type" : "SHARED_LIBRARY"
+}
