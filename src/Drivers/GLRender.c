@@ -587,7 +587,9 @@ SDL_Rect GLRender_GetCurrentViewport(void)
 void GLRender_PresentFramebuffer(void)
 {
 	static SDL_Rect previousViewportRect = {0};
+#ifndef __ANDROID__
 	static int previousEffectiveScalingType = kScaling_Unspecified;
+#endif
 	static int needClear = 60;
 
 	const int vw = VISIBLE_WIDTH;

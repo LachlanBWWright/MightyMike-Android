@@ -80,6 +80,7 @@ static void UpdateScreenDimensions(void)
 
 static bool IsInJoystickZone(float x, float y)
 {
+	(void)y;  // y not needed: joystick zone is the left 40% of screen width
 	UpdateScreenDimensions();
 	// Left 40% of screen
 	return x < gScreenW * 0.4f;
