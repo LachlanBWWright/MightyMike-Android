@@ -29,6 +29,10 @@ jobs:
           cp extern/SDL/android-project/app/src/main/java/org/libsdl/app/*.java \
              android/app/src/main/java/org/libsdl/app/
 
+      - name: Accept Android SDK licenses
+        run: |
+          yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --licenses || true
+
       - name: Install Android NDK and CMake
         run: |
           ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager \
