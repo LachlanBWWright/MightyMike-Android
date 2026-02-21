@@ -161,19 +161,25 @@ static GLuint GLES_CreateShaderProgram(void)
 #include <math.h>
 // Draw a filled polygon (triangle fan) in screen-pixel coordinates.
 // Caller must have set up projection matrix, bound white texture, set color uniform.
+// segments must be <= 62 (array holds segments+2 vertices, max 64).
 static void GLES_DrawFilledCircle(float cx, float cy, float radius, int segments,
                                   float screenW, float screenH)
 {
-	// Build triangle fan: center + (segments) points on circumference
-	int nVerts = segments + 2;  // center + ring + close
-	float verts[64][4];  // x, y, u, v — capped at 64 verts (segments <= 62)
-	if (nVerts > 64) nVerts = 64;
+#define GLES_CIRCLE_MAX_SEGMENTS 62
+#define GLES_CIRCLE_MAX_VERTS    (GLES_CIRCLE_MAX_SEGMENTS + 2)
+	if (segments > GLES_CIRCLE_MAX_SEGMENTS) segments = GLES_CIRCLE_MAX_SEGMENTS;
+
+	// Build triangle fan: center + segments ring vertices + closing vertex
+	int nVerts = segments + 2;
+	float verts[GLES_CIRCLE_MAX_VERTS][4];  // x, y, u, v
+
+	static const float kTwoPI = 6.2831853f;  // 2 * PI
 
 	// Ortho: NDC x = 2*px/screenW - 1, NDC y = 1 - 2*py/screenH
 	verts[0][0] = cx;  verts[0][1] = cy;  verts[0][2] = 0.5f;  verts[0][3] = 0.5f;
 	for (int i = 1; i < nVerts; i++)
 	{
-		float angle = (float)(i - 1) * 2.0f * 3.14159265f / (float)(segments);
+		float angle = (float)(i - 1) * kTwoPI / (float)segments;
 		verts[i][0] = cx + radius * cosf(angle);
 		verts[i][1] = cy + radius * sinf(angle);
 		verts[i][2] = 0.5f;
@@ -192,13 +198,15 @@ static void GLES_DrawFilledCircle(float cx, float cy, float radius, int segments
 
 	glBindVertexArray(gQuadVAO);
 	glBindBuffer(GL_ARRAY_BUFFER, gQuadVBO);
-	glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(nVerts * 4 * sizeof(float)), verts, GL_STREAM_DRAW);
+	glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(nVerts * 4 * (GLsizei)sizeof(float)), verts, GL_STREAM_DRAW);
 	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * (GLsizei)sizeof(float), (void*)0);
 	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * (GLsizei)sizeof(float), (void*)(2 * sizeof(float)));
 	glEnableVertexAttribArray(0);
 	glEnableVertexAttribArray(1);
 	glDrawArrays(GL_TRIANGLE_FAN, 0, nVerts);
 	glBindVertexArray(0);
+#undef GLES_CIRCLE_MAX_SEGMENTS
+#undef GLES_CIRCLE_MAX_VERTS
 }
 
 // Draw touch control overlay (joystick + buttons) on top of the game frame.
