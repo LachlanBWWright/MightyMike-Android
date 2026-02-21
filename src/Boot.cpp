@@ -294,7 +294,7 @@ static fs::path FindGameData(const char* executablePath)
 	if (!ExtractGameDataIfNeeded(internalPath))
 		throw std::runtime_error("Failed to extract game data from APK.");
 
-	dataPath = fs::path(internalPath) / "Data";
+	dataPath = std::filesystem::path(internalPath) / "Data";
 
 	gDataSpec = Pomme::Files::HostPathToFSSpec(dataPath / "System");
 
@@ -381,6 +381,11 @@ static void Boot(int argc, char** argv)
 	{
 		std::error_code ec;
 		std::filesystem::create_directories(std::string(internalPath) + "/.config", ec);
+		if (ec)
+		{
+			SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+				"Couldn't create config dir: %s", ec.message().c_str());
+		}
 	}
 #endif // __ANDROID__
 

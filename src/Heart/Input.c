@@ -215,6 +215,15 @@ void UpdateInput(void)
 			if (kb->key[j] && kb->key[j] < numkeys)
 				downNow |= KEYSTATE_ACTIVE_BIT & gRawKeyboardState[kb->key[j]];
 
+#ifdef __ANDROID__
+		// Map Android's back button (AC_BACK scancode) to UIBack and UIPause needs
+		if ((i == kNeed_UIBack || i == kNeed_UIPause)
+			&& SDL_SCANCODE_AC_BACK < numkeys)
+		{
+			downNow |= KEYSTATE_ACTIVE_BIT & gRawKeyboardState[SDL_SCANCODE_AC_BACK];
+		}
+#endif
+
 		switch (kb->mouse.type)
 		{
 			case kButton:

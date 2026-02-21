@@ -184,11 +184,11 @@ SDL_Point FitRectKeepAR(
 
 	if (displayAR >= logicalAR)
 	{
-		return (SDL_Point) { displayHeight * logicalAR, displayHeight };
+		return (SDL_Point) { (int)(displayHeight * logicalAR), displayHeight };
 	}
 	else
 	{
-		return (SDL_Point) { displayWidth, displayWidth / logicalAR };
+		return (SDL_Point) { displayWidth, (int)(displayWidth / logicalAR) };
 	}
 }
 
