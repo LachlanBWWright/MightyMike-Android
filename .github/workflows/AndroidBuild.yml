@@ -1,0 +1,46 @@
+name: Android Build
+
+on: [push, pull_request, workflow_dispatch]
+
+permissions:
+  contents: read
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Clone SDL3
+        run: git clone --depth 1 https://github.com/libsdl-org/SDL.git extern/SDL
+
+      - name: Copy SDL Java bridge files
+        run: |
+          mkdir -p android/app/src/main/java/org/libsdl/app
+          cp extern/SDL/android-project/app/src/main/java/org/libsdl/app/*.java \
+             android/app/src/main/java/org/libsdl/app/
+
+      - name: Install Android NDK and CMake
+        run: |
+          ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager \
+            "ndk;27.3.13750724" \
+            "cmake;3.22.1"
+
+      - name: Build APK
+        working-directory: android
+        run: ./gradlew assembleDebug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MightyMike-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error

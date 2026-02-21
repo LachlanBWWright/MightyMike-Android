@@ -23,6 +23,9 @@
 #include "renderdrivers.h"
 #include "framebufferfilter.h"
 
+#ifdef __ANDROID__
+#include <GLES3/gl3.h>
+#else
 #include <SDL3/SDL_opengl.h>
 #include <SDL3/SDL_opengl_glext.h>
 PFNGLGENBUFFERSARBPROC glGenBuffersARB;
@@ -31,6 +34,7 @@ PFNGLBINDBUFFERARBPROC glBindBufferARB;
 PFNGLMAPBUFFERARBPROC glMapBufferARB;
 PFNGLBUFFERDATAARBPROC glBufferDataARB;
 PFNGLUNMAPBUFFERARBPROC glUnmapBufferARB;
+#endif // __ANDROID__
 
 // Marginal FPS increase at the cost of 1 frame of latency
 #define DEFERRED_TEX_UPDATE 0
@@ -61,11 +65,94 @@ PFNGLUNMAPBUFFERARBPROC glUnmapBufferARB;
 
 static SDL_GLContext gGLContext = NULL;
 static GLuint gFrameTexture = 0;
+#ifndef __ANDROID__
 static GLuint gFramePBO = 0;
+#endif
 static GLint gMaxTextureSize = 0;
 
 const char* gRendererName = "NULL";
 Boolean gCanDoHQStretch = true;
+
+#ifdef __ANDROID__
+// OpenGL ES 3.0 shader-based rendering state
+static GLuint gShaderProgram = 0;
+static GLuint gQuadVAO = 0;
+static GLuint gQuadVBO = 0;
+static GLuint gQuadIBO = 0;
+static GLint gUniformMVP = -1;
+static color_t s_androidFrameBuffer[kFrameTextureWidth * kFrameTextureHeight];
+
+static const char* kVertexShaderSrc =
+	"#version 300 es\n"
+	"precision mediump float;\n"
+	"uniform mat4 u_mvp;\n"
+	"in vec2 a_position;\n"
+	"in vec2 a_texcoord;\n"
+	"out vec2 v_texcoord;\n"
+	"void main() {\n"
+	"    gl_Position = u_mvp * vec4(a_position, 0.0, 1.0);\n"
+	"    v_texcoord = a_texcoord;\n"
+	"}\n";
+
+static const char* kFragmentShaderSrc =
+	"#version 300 es\n"
+	"precision mediump float;\n"
+	"uniform sampler2D u_texture;\n"
+	"in vec2 v_texcoord;\n"
+	"out vec4 fragColor;\n"
+	"void main() {\n"
+	"    fragColor = texture(u_texture, v_texcoord);\n"
+	"}\n";
+
+static GLuint GLES_CompileShader(GLenum type, const char* src)
+{
+	GLuint shader = glCreateShader(type);
+	glShaderSource(shader, 1, &src, NULL);
+	glCompileShader(shader);
+	GLint status = 0;
+	glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
+	if (!status)
+	{
+		GLint logLen = 0;
+		glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &logLen);
+		char* log = logLen > 0 ? (char*)SDL_malloc(logLen) : NULL;
+		if (log) glGetShaderInfoLog(shader, logLen, NULL, log);
+		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Shader compile error: %s", log ? log : "(no log)");
+		SDL_free(log);
+		glDeleteShader(shader);
+		return 0;
+	}
+	return shader;
+}
+
+static GLuint GLES_CreateShaderProgram(void)
+{
+	GLuint vs = GLES_CompileShader(GL_VERTEX_SHADER, kVertexShaderSrc);
+	GLuint fs = GLES_CompileShader(GL_FRAGMENT_SHADER, kFragmentShaderSrc);
+	GLuint prog = glCreateProgram();
+	glAttachShader(prog, vs);
+	glAttachShader(prog, fs);
+	glBindAttribLocation(prog, 0, "a_position");
+	glBindAttribLocation(prog, 1, "a_texcoord");
+	glLinkProgram(prog);
+	GLint status = 0;
+	glGetProgramiv(prog, GL_LINK_STATUS, &status);
+	if (!status)
+	{
+		GLint logLen = 0;
+		glGetProgramiv(prog, GL_INFO_LOG_LENGTH, &logLen);
+		char* log = logLen > 0 ? (char*)SDL_malloc(logLen) : NULL;
+		if (log) glGetProgramInfoLog(prog, logLen, NULL, log);
+		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Shader link error: %s", log ? log : "(no log)");
+		SDL_free(log);
+		glDeleteProgram(prog);
+		prog = 0;
+	}
+	glDeleteShader(vs);
+	glDeleteShader(fs);
+	return prog;
+}
+#endif // __ANDROID__
 
 #if _DEBUG
 #define CHECK_GL_ERROR()												\
@@ -85,6 +172,7 @@ static void DoFatalGLError(GLenum error, const char* file, int line)
 #define CHECK_GL_ERROR() do {} while(0)
 #endif
 
+#ifndef __ANDROID__
 SDL_Point FitRectKeepAR(
 		int logicalWidth,
 		int logicalHeight,
@@ -113,18 +201,41 @@ static void GLRender_InitMatrices(void)
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
 }
+#else
+SDL_Point FitRectKeepAR(
+		int logicalWidth,
+		int logicalHeight,
+		int displayWidth,
+		int displayHeight)
+{
+	float displayAR = (float)displayWidth / (float)displayHeight;
+	float logicalAR = (float)logicalWidth / (float)logicalHeight;
 
+	if (displayAR >= logicalAR)
+	{
+		return (SDL_Point) { (int)(displayHeight * logicalAR), displayHeight };
+	}
+	else
+	{
+		return (SDL_Point) { displayWidth, (int)(displayWidth / logicalAR) };
+	}
+}
+#endif // __ANDROID__
+
+#ifndef __ANDROID__
 #define GL_GET_PROC_ADDRESS(t, proc) \
 do { \
     (proc) = (t) SDL_GL_GetProcAddress(#proc); \
     GAME_ASSERT_MESSAGE((proc), "Missing OpenGL procedure " #proc); \
 } while(0)
+#endif // !__ANDROID__
 
 static void InitTextureAndPBO(int pixelZoom)
 {
 	glGenTextures(1, &gFrameTexture);
 	CHECK_GL_ERROR();
 
+#ifndef __ANDROID__
 	glGenBuffersARB(1, &gFramePBO);
 	CHECK_GL_ERROR();
 
@@ -138,6 +249,7 @@ static void InitTextureAndPBO(int pixelZoom)
 		GL_STREAM_DRAW);
 	CHECK_GL_ERROR();
 #endif
+#endif // !__ANDROID__
 
 	glBindTexture(GL_TEXTURE_2D, gFrameTexture);
 	CHECK_GL_ERROR();
@@ -170,11 +282,20 @@ static void DeleteTextureAndPBO(void)
 		gFrameTexture = 0;
 	}
 
+#ifndef __ANDROID__
 	if (gFramePBO != 0)
 	{
 		glDeleteBuffersARB(1, &gFramePBO);
 		gFramePBO = 0;
 	}
+#endif // !__ANDROID__
+
+#ifdef __ANDROID__
+	if (gQuadVBO != 0) { glDeleteBuffers(1, &gQuadVBO); gQuadVBO = 0; }
+	if (gQuadIBO != 0) { glDeleteBuffers(1, &gQuadIBO); gQuadIBO = 0; }
+	if (gQuadVAO != 0) { glDeleteVertexArrays(1, &gQuadVAO); gQuadVAO = 0; }
+	if (gShaderProgram != 0) { glDeleteProgram(gShaderProgram); gShaderProgram = 0; }
+#endif // __ANDROID__
 }
 
 void GLRender_Init(void)
@@ -205,18 +326,23 @@ void GLRender_Init(void)
 		DoAlert(message);
 	}
 
-#if OSXPPC
+#ifdef __ANDROID__
+	// No HQ stretch on Android; GLES3 uses shader-based rendering
+	gCanDoHQStretch = false;
+#elif OSXPPC
 	gCanDoHQStretch = false;
 #else
 	gCanDoHQStretch = gMaxTextureSize >= 2*kFrameTextureWidth;
 #endif
 
+#ifndef __ANDROID__
 	GL_GET_PROC_ADDRESS(PFNGLGENBUFFERSARBPROC, glGenBuffersARB);
 	GL_GET_PROC_ADDRESS(PFNGLDELETEBUFFERSARBPROC, glDeleteBuffersARB);
 	GL_GET_PROC_ADDRESS(PFNGLBINDBUFFERARBPROC, glBindBufferARB);
 	GL_GET_PROC_ADDRESS(PFNGLUNMAPBUFFERPROC, glUnmapBufferARB);
 	GL_GET_PROC_ADDRESS(PFNGLMAPBUFFERARBPROC, glMapBufferARB);
 	GL_GET_PROC_ADDRESS(PFNGLBUFFERDATAARBPROC, glBufferDataARB);
+#endif // !__ANDROID__
 
 #if !(NOVSYNC)
 	SDL_GL_SetSwapInterval(1);
@@ -224,6 +350,30 @@ void GLRender_Init(void)
 	SDL_GL_SetSwapInterval(0);
 #endif
 
+#ifdef __ANDROID__
+	// GLES3: create shader program and quad VBO/VAO
+	gShaderProgram = GLES_CreateShaderProgram();
+	GAME_ASSERT(gShaderProgram);
+
+	gUniformMVP = glGetUniformLocation(gShaderProgram, "u_mvp");
+	glUseProgram(gShaderProgram);
+	glUniform1i(glGetUniformLocation(gShaderProgram, "u_texture"), 0);
+
+	glGenVertexArrays(1, &gQuadVAO);
+	glGenBuffers(1, &gQuadVBO);
+	glGenBuffers(1, &gQuadIBO);
+
+	// Pre-upload static indices (quad split into two triangles)
+	static const uint16_t kQuadIndices[6] = { 0, 1, 2, 0, 2, 3 };
+	glBindVertexArray(gQuadVAO);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gQuadIBO);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(kQuadIndices), kQuadIndices, GL_STATIC_DRAW);
+	glBindVertexArray(0);
+
+	glDisable(GL_DEPTH_TEST);
+	glDisable(GL_BLEND);
+	glDisable(GL_CULL_FACE);
+#else
 	GLRender_InitMatrices();
 
 	glDisable(GL_FOG);
@@ -237,6 +387,7 @@ void GLRender_Init(void)
 	glDepthMask(false);
 
 	glColor4f(1,1,1,1);
+#endif // __ANDROID__
 
 	//glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 	glClearColor(0, 0, 0, 1);
@@ -312,6 +463,7 @@ void GLRender_PresentFramebuffer(void)
 		needClear = 60;
 	}
 
+#ifndef __ANDROID__
 	bool isHQ = gEffectiveScalingType == kScaling_HQStretch;
 	bool wasHQ = previousEffectiveScalingType == kScaling_HQStretch;
 	if (wasHQ ^ isHQ)
@@ -344,6 +496,7 @@ void GLRender_PresentFramebuffer(void)
 
 	glUnmapBufferARB(GL_PIXEL_UNPACK_BUFFER_ARB);
 	CHECK_GL_ERROR();
+#endif // !__ANDROID__
 
 	//-------------------------------------------------------------------------
 	// Draw the quad
@@ -366,6 +519,51 @@ void GLRender_PresentFramebuffer(void)
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
 					gEffectiveScalingType == kScaling_PixelPerfect ? GL_NEAREST : GL_LINEAR);
 
+#ifdef __ANDROID__
+	//-------------------------------------------------------------------------
+	// Android GLES3: direct texture upload + shader-based quad
+
+	ConvertFramebufferMT(s_androidFrameBuffer);
+	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, vw, vh, kFramePixelFormat, kFramePixelType, s_androidFrameBuffer);
+	CHECK_GL_ERROR();
+
+	const float umax = vw * (1.0f / kFrameTextureWidth);
+	const float vmax = vh * (1.0f / kFrameTextureHeight);
+
+	// Quad vertices: (x, y, u, v) - maps [0,vw]x[0,vh] with Y=0 at top
+	float verts[4][4] = {
+		{ 0.0f,  (float)vh,  0.0f,  vmax },
+		{ (float)vw, (float)vh,  umax,  vmax },
+		{ (float)vw, 0.0f,        umax,  0.0f },
+		{ 0.0f,  0.0f,        0.0f,  0.0f },
+	};
+
+	// Orthographic projection: maps [0,vw]x[0,vh] -> NDC, Y-flipped (top=0)
+	// Column-major for OpenGL: x_ndc = 2x/vw - 1,  y_ndc = 1 - 2y/vh
+	float mvp[16] = {
+		2.0f/vw,   0,        0, 0,   // col 0
+		0,        -2.0f/vh,  0, 0,   // col 1
+		0,         0,       -1, 0,   // col 2
+		-1.0f,     1.0f,     0, 1,   // col 3
+	};
+
+	glUseProgram(gShaderProgram);
+	glUniformMatrix4fv(gUniformMVP, 1, GL_FALSE, mvp);
+
+	glBindVertexArray(gQuadVAO);
+	glBindBuffer(GL_ARRAY_BUFFER, gQuadVBO);
+	glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)sizeof(verts), verts, GL_STREAM_DRAW);
+	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * (GLsizei)sizeof(float), (void*)0);
+	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * (GLsizei)sizeof(float), (void*)(2 * sizeof(float)));
+	glEnableVertexAttribArray(0);
+	glEnableVertexAttribArray(1);
+	glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, 0);
+	glBindVertexArray(0);
+	CHECK_GL_ERROR();
+#else
+	//-------------------------------------------------------------------------
+	// Desktop: PBO-based texture upload + fixed-function quad
+
 #if !DEFERRED_TEX_UPDATE
 	// Update the texture
 	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, zvw, zvh, kFramePixelFormat, kFramePixelType, NULL);
@@ -384,10 +582,11 @@ void GLRender_PresentFramebuffer(void)
 	glTexCoord2f(   0,    0); glVertex3f( 0,  0, 0);
 	glEnd();
 	CHECK_GL_ERROR();
+#endif // __ANDROID__
 
 	SDL_GL_SwapWindow(gSDLWindow);
 
-#if DEFERRED_TEX_UPDATE
+#if !defined(__ANDROID__) && DEFERRED_TEX_UPDATE
 	//-------------------------------------------------------------------------
 	// Update texture
 

@@ -20,6 +20,10 @@
 #include "structures.h"
 #include "externs.h"
 
+#ifdef __ANDROID__
+#include "touchcontrols.h"
+#endif
+
 /**********************/
 /*     PROTOTYPES     */
 /**********************/
@@ -90,6 +94,9 @@ static inline void UpdateKeyState(Byte* state, bool downNow)
 
 void InitInput(void)
 {
+#ifdef __ANDROID__
+	TouchControls_Init();
+#endif
 }
 
 
@@ -139,6 +146,14 @@ void UpdateInput(void)
 			mouseWheelDelta += event.wheel.y;
 			mouseWheelDelta += event.wheel.x;
 			break;
+
+#ifdef __ANDROID__
+		case SDL_EVENT_FINGER_DOWN:
+		case SDL_EVENT_FINGER_MOTION:
+		case SDL_EVENT_FINGER_UP:
+			TouchControls_HandleEvent(&event);
+			break;
+#endif
 		}
 	}
 
@@ -147,7 +162,14 @@ void UpdateInput(void)
 
 	int numkeys = 0;
 	const bool* keystate = SDL_GetKeyboardState(&numkeys);
+
+#ifdef __ANDROID__
+	// On Android, ignore touch-synthesised mouse button events to avoid
+	// unintended in-game actions when the virtual joystick is touched.
+	uint32_t mouseButtons = 0;
+#else
 	uint32_t mouseButtons = SDL_GetMouseState(NULL, NULL);
+#endif
 
 	{
 		int minNumKeys = numkeys < SDL_SCANCODE_COUNT ? numkeys : SDL_SCANCODE_COUNT;
@@ -178,6 +200,10 @@ void UpdateInput(void)
 
 	// --------------------------------------------
 	// Update needs
+
+#ifdef __ANDROID__
+	TouchControls_UpdateNeeds();
+#endif
 
 	for (int i = 0; i < NUM_CONTROL_NEEDS; i++)
 	{
@@ -234,6 +260,10 @@ void UpdateInput(void)
 				}
 			}
 		}
+
+#ifdef __ANDROID__
+		downNow |= TouchControls_IsPressed(i);
+#endif
 
 		UpdateKeyState(&gNeedStates[i], downNow);
 	}
