@@ -208,6 +208,10 @@ void GLRender_DrawTouchControlsOverlay(float screenW, float screenH,
                                        float joyThumbX, float joyThumbY, bool joyActive,
                                        float btn[5][2], float btnR, bool btnPressed[5])
 {
+	// Switch to full-window viewport so touch controls appear over the entire screen,
+	// including letterbox bars.  Restore the game viewport afterwards.
+	glViewport(0, 0, (GLsizei)screenW, (GLsizei)screenH);
+
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	glBindTexture(GL_TEXTURE_2D, gWhiteTex);
@@ -256,6 +260,10 @@ void GLRender_DrawTouchControlsOverlay(float screenW, float screenH,
 	glUniform4f(gUniformColor, 1.0f, 1.0f, 1.0f, 1.0f);
 	glDisable(GL_BLEND);
 	glBindTexture(GL_TEXTURE_2D, gFrameTexture);
+	// Restore the game (letterboxed) viewport
+	extern SDL_Rect GLRender_GetCurrentViewport(void);
+	SDL_Rect vp = GLRender_GetCurrentViewport();
+	glViewport(vp.x, vp.y, vp.w, vp.h);
 }
 #endif // __ANDROID__ (GLRender_DrawTouchControlsOverlay)
 
@@ -559,6 +567,15 @@ static SDL_Rect GetViewportSize(void)
 	};
 }
 
+#ifdef __ANDROID__
+static SDL_Rect gCurrentViewportRect = {0};
+
+SDL_Rect GLRender_GetCurrentViewport(void)
+{
+	return gCurrentViewportRect;
+}
+#endif
+
 void GLRender_PresentFramebuffer(void)
 {
 	static SDL_Rect previousViewportRect = {0};
@@ -581,8 +598,9 @@ void GLRender_PresentFramebuffer(void)
 		glViewport(viewportRect.x, viewportRect.y, viewportRect.w, viewportRect.h);
 		needClear = 60;
 	}
-
-#ifndef __ANDROID__
+#ifdef __ANDROID__
+	gCurrentViewportRect = viewportRect;
+#else
 	bool isHQ = gEffectiveScalingType == kScaling_HQStretch;
 	bool wasHQ = previousEffectiveScalingType == kScaling_HQStretch;
 	if (wasHQ ^ isHQ)
