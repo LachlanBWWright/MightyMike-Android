@@ -9,5 +9,6 @@ void TouchControls_Init(void);
 void TouchControls_HandleEvent(const SDL_Event* event);
 void TouchControls_UpdateNeeds(void);
 bool TouchControls_IsPressed(int needID);
+void TouchControls_DrawOverlay(void);
 
 #endif // __ANDROID__

@@ -337,4 +337,39 @@ bool TouchControls_IsPressed(int needID)
 	}
 }
 
+extern void GLRender_DrawTouchControlsOverlay(float screenW, float screenH,
+                                               float joyCX, float joyCY, float joyR,
+                                               float joyThumbX, float joyThumbY, bool joyActive,
+                                               float btn[5][2], float btnR, bool btnPressed[5]);
+
+void TouchControls_DrawOverlay(void)
+{
+	UpdateScreenDimensions();
+	float sw = (float)gScreenW;
+	float sh = (float)gScreenH;
+
+	float joyR  = sh * JOYSTICK_RADIUS_FRAC;
+	float joyCX = sw * JOYSTICK_CX_FRAC;
+	float joyCY = sh * JOYSTICK_CY_FRAC;
+
+	// Compute thumb position
+	float thumbX = joyCX + gJoystickDX * joyR;
+	float thumbY = joyCY + gJoystickDY * joyR;
+
+	float btnR = sh * BTN_RADIUS_FRAC;
+	float btn[5][2] = {
+		{ sw * BTN_A_CX_FRAC,    sh * BTN_A_CY_FRAC    },
+		{ sw * BTN_B_CX_FRAC,    sh * BTN_B_CY_FRAC    },
+		{ sw * BTN_PREV_CX_FRAC, sh * BTN_PREV_CY_FRAC },
+		{ sw * BTN_NEXT_CX_FRAC, sh * BTN_NEXT_CY_FRAC },
+		{ sw * BTN_PAUSE_CX_FRAC,sh * BTN_PAUSE_CY_FRAC},
+	};
+	bool pressed[5] = { gBtnAttack, gBtnBack, gBtnPrevWeapon, gBtnNextWeapon, gBtnPause };
+
+	GLRender_DrawTouchControlsOverlay(sw, sh,
+		joyCX, joyCY, joyR,
+		thumbX, thumbY, gJoystickFingerActive,
+		btn, btnR, pressed);
+}
+
 #endif // __ANDROID__

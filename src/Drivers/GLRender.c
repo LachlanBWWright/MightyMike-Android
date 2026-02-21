@@ -80,6 +80,8 @@ static GLuint gQuadVAO = 0;
 static GLuint gQuadVBO = 0;
 static GLuint gQuadIBO = 0;
 static GLint gUniformMVP = -1;
+static GLint gUniformColor = -1;
+static GLuint gWhiteTex = 0;           // 1×1 white texture for solid-color drawing
 static color_t s_androidFrameBuffer[kFrameTextureWidth * kFrameTextureHeight];
 
 static const char* kVertexShaderSrc =
@@ -98,10 +100,11 @@ static const char* kFragmentShaderSrc =
 	"#version 300 es\n"
 	"precision mediump float;\n"
 	"uniform sampler2D u_texture;\n"
+	"uniform vec4 u_color;\n"
 	"in vec2 v_texcoord;\n"
 	"out vec4 fragColor;\n"
 	"void main() {\n"
-	"    fragColor = texture(u_texture, v_texcoord);\n"
+	"    fragColor = texture(u_texture, v_texcoord) * u_color;\n"
 	"}\n";
 
 static GLuint GLES_CompileShader(GLenum type, const char* src)
@@ -153,6 +156,108 @@ static GLuint GLES_CreateShaderProgram(void)
 	return prog;
 }
 #endif // __ANDROID__
+
+#ifdef __ANDROID__
+#include <math.h>
+// Draw a filled polygon (triangle fan) in screen-pixel coordinates.
+// Caller must have set up projection matrix, bound white texture, set color uniform.
+static void GLES_DrawFilledCircle(float cx, float cy, float radius, int segments,
+                                  float screenW, float screenH)
+{
+	// Build triangle fan: center + (segments) points on circumference
+	int nVerts = segments + 2;  // center + ring + close
+	float verts[64][4];  // x, y, u, v — capped at 64 verts (segments <= 62)
+	if (nVerts > 64) nVerts = 64;
+
+	// Ortho: NDC x = 2*px/screenW - 1, NDC y = 1 - 2*py/screenH
+	verts[0][0] = cx;  verts[0][1] = cy;  verts[0][2] = 0.5f;  verts[0][3] = 0.5f;
+	for (int i = 1; i < nVerts; i++)
+	{
+		float angle = (float)(i - 1) * 2.0f * 3.14159265f / (float)(segments);
+		verts[i][0] = cx + radius * cosf(angle);
+		verts[i][1] = cy + radius * sinf(angle);
+		verts[i][2] = 0.5f;
+		verts[i][3] = 0.5f;
+	}
+	verts[nVerts - 1][0] = verts[1][0];  // close the fan
+	verts[nVerts - 1][1] = verts[1][1];
+
+	float mvp[16] = {
+		2.0f/screenW,  0,           0, 0,
+		0,            -2.0f/screenH, 0, 0,
+		0,             0,           -1, 0,
+		-1.0f,         1.0f,         0, 1,
+	};
+	glUniformMatrix4fv(gUniformMVP, 1, GL_FALSE, mvp);
+
+	glBindVertexArray(gQuadVAO);
+	glBindBuffer(GL_ARRAY_BUFFER, gQuadVBO);
+	glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(nVerts * 4 * sizeof(float)), verts, GL_STREAM_DRAW);
+	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * (GLsizei)sizeof(float), (void*)0);
+	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * (GLsizei)sizeof(float), (void*)(2 * sizeof(float)));
+	glEnableVertexAttribArray(0);
+	glEnableVertexAttribArray(1);
+	glDrawArrays(GL_TRIANGLE_FAN, 0, nVerts);
+	glBindVertexArray(0);
+}
+
+// Draw touch control overlay (joystick + buttons) on top of the game frame.
+// Called from GLRender_Present() after the game framebuffer quad.
+void GLRender_DrawTouchControlsOverlay(float screenW, float screenH,
+                                       float joyCX, float joyCY, float joyR,
+                                       float joyThumbX, float joyThumbY, bool joyActive,
+                                       float btn[5][2], float btnR, bool btnPressed[5])
+{
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glBindTexture(GL_TEXTURE_2D, gWhiteTex);
+	glUseProgram(gShaderProgram);
+
+	// --- Joystick outer ring (semi-transparent dark) ---
+	glUniform4f(gUniformColor, 0.2f, 0.2f, 0.2f, 0.3f);
+	GLES_DrawFilledCircle(joyCX, joyCY, joyR, 24, screenW, screenH);
+
+	// --- Joystick ring outline ---
+	// Draw as a slightly larger filled circle minus the inner to fake an outline
+	// (simpler than a line loop on GLES3 which has no width guarantee)
+	glUniform4f(gUniformColor, 0.8f, 0.8f, 0.8f, 0.5f);
+	GLES_DrawFilledCircle(joyCX, joyCY, joyR, 24, screenW, screenH);
+	glUniform4f(gUniformColor, 0.2f, 0.2f, 0.2f, 0.3f);
+	GLES_DrawFilledCircle(joyCX, joyCY, joyR * 0.92f, 24, screenW, screenH);
+
+	// --- Joystick thumb indicator ---
+	if (joyActive)
+	{
+		glUniform4f(gUniformColor, 0.7f, 0.7f, 0.9f, 0.5f);
+		GLES_DrawFilledCircle(joyThumbX, joyThumbY, joyR * 0.35f, 16, screenW, screenH);
+	}
+
+	// --- Action buttons ---
+	static const float kBtnColors[5][4] = {
+		{ 0.9f, 0.5f, 0.2f, 0.45f },   // Attack: orange
+		{ 0.3f, 0.6f, 0.9f, 0.40f },   // Back:   blue
+		{ 0.5f, 0.9f, 0.5f, 0.40f },   // Prev:   green
+		{ 0.5f, 0.9f, 0.5f, 0.40f },   // Next:   green
+		{ 0.9f, 0.9f, 0.9f, 0.35f },   // Pause:  grey
+	};
+	for (int i = 0; i < 5; i++)
+	{
+		float alpha = btnPressed[i] ? 0.8f : kBtnColors[i][3];
+		glUniform4f(gUniformColor, kBtnColors[i][0], kBtnColors[i][1], kBtnColors[i][2], alpha);
+		GLES_DrawFilledCircle(btn[i][0], btn[i][1], btnR, 20, screenW, screenH);
+		// Outline
+		glUniform4f(gUniformColor, 1.0f, 1.0f, 1.0f, 0.55f);
+		GLES_DrawFilledCircle(btn[i][0], btn[i][1], btnR, 20, screenW, screenH);
+		glUniform4f(gUniformColor, kBtnColors[i][0], kBtnColors[i][1], kBtnColors[i][2], alpha);
+		GLES_DrawFilledCircle(btn[i][0], btn[i][1], btnR * 0.87f, 20, screenW, screenH);
+	}
+
+	// Restore state
+	glUniform4f(gUniformColor, 1.0f, 1.0f, 1.0f, 1.0f);
+	glDisable(GL_BLEND);
+	glBindTexture(GL_TEXTURE_2D, gFrameTexture);
+}
+#endif // __ANDROID__ (GLRender_DrawTouchControlsOverlay)
 
 #if _DEBUG
 #define CHECK_GL_ERROR()												\
@@ -291,6 +396,7 @@ static void DeleteTextureAndPBO(void)
 #endif // !__ANDROID__
 
 #ifdef __ANDROID__
+	if (gWhiteTex != 0)      { glDeleteTextures(1, &gWhiteTex); gWhiteTex = 0; }
 	if (gQuadVBO != 0) { glDeleteBuffers(1, &gQuadVBO); gQuadVBO = 0; }
 	if (gQuadIBO != 0) { glDeleteBuffers(1, &gQuadIBO); gQuadIBO = 0; }
 	if (gQuadVAO != 0) { glDeleteVertexArrays(1, &gQuadVAO); gQuadVAO = 0; }
@@ -355,9 +461,11 @@ void GLRender_Init(void)
 	gShaderProgram = GLES_CreateShaderProgram();
 	GAME_ASSERT(gShaderProgram);
 
-	gUniformMVP = glGetUniformLocation(gShaderProgram, "u_mvp");
+	gUniformMVP   = glGetUniformLocation(gShaderProgram, "u_mvp");
+	gUniformColor = glGetUniformLocation(gShaderProgram, "u_color");
 	glUseProgram(gShaderProgram);
 	glUniform1i(glGetUniformLocation(gShaderProgram, "u_texture"), 0);
+	glUniform4f(gUniformColor, 1.0f, 1.0f, 1.0f, 1.0f);  // default: white, fully opaque
 
 	glGenVertexArrays(1, &gQuadVAO);
 	glGenBuffers(1, &gQuadVBO);
@@ -369,6 +477,17 @@ void GLRender_Init(void)
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gQuadIBO);
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(kQuadIndices), kQuadIndices, GL_STATIC_DRAW);
 	glBindVertexArray(0);
+
+	// Create 1×1 white texture used for solid-color drawing (touch control overlay)
+	{
+		static const uint8_t kWhitePixel[4] = { 255, 255, 255, 255 };
+		glGenTextures(1, &gWhiteTex);
+		glBindTexture(GL_TEXTURE_2D, gWhiteTex);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, kWhitePixel);
+		glBindTexture(GL_TEXTURE_2D, 0);
+	}
 
 	glDisable(GL_DEPTH_TEST);
 	glDisable(GL_BLEND);
@@ -560,6 +679,13 @@ void GLRender_PresentFramebuffer(void)
 	glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, 0);
 	glBindVertexArray(0);
 	CHECK_GL_ERROR();
+
+	// Draw touch control overlay (joystick + buttons) using actual screen pixel dimensions
+	glUniform4f(gUniformColor, 1.0f, 1.0f, 1.0f, 1.0f);  // reset color before overlay
+	{
+		extern void TouchControls_DrawOverlay(void);
+		TouchControls_DrawOverlay();
+	}
 #else
 	//-------------------------------------------------------------------------
 	// Desktop: PBO-based texture upload + fixed-function quad
