@@ -14,32 +14,51 @@
 #include "touchcontrols.h"
 
 //------------------------------------------------------------
-// Layout constants (in display pixels, scaled by screen size)
+// Button indices
+//------------------------------------------------------------
+#define BTN_IDX_ATTACK    0   // kNeed_Attack
+#define BTN_IDX_BACK      1   // kNeed_UIBack / kNeed_UIPrev
+#define BTN_IDX_PREV      2   // kNeed_PrevWeapon
+#define BTN_IDX_NEXT      3   // kNeed_NextWeapon
+#define BTN_IDX_PAUSE     4   // kNeed_UIPause
+#define BTN_IDX_RADAR     5   // kNeed_Radar
+#define BTN_IDX_MUSIC     6   // kNeed_ToggleMusic
+// NUM_BUTTONS is defined in touchcontrols.h
+
+//------------------------------------------------------------
+// Layout constants (fractions of screen dimensions)
 //------------------------------------------------------------
 
-#define MAX_TOUCH_POINTS		10
+#define MAX_TOUCH_POINTS        10
 
-// Joystick is on the left side
-#define JOYSTICK_RADIUS_FRAC	0.12f   // radius as fraction of screen height
-#define JOYSTICK_CX_FRAC		0.15f   // center X as fraction of screen width
-#define JOYSTICK_CY_FRAC		0.75f   // center Y as fraction of screen height
-#define JOYSTICK_DEAD_ZONE		0.25f   // dead zone fraction of joystick radius
+// Joystick (left side)
+#define JOYSTICK_RADIUS_FRAC    0.12f
+#define JOYSTICK_CX_FRAC        0.15f
+#define JOYSTICK_CY_FRAC        0.75f
+#define JOYSTICK_DEAD_ZONE      0.08f   // fraction of joystick radius
 
-// Right-side buttons
-#define BTN_RADIUS_FRAC			0.07f   // radius as fraction of screen height
+// Button radii (fraction of screen height)
+#define BTN_RADIUS_FRAC         0.09f   // main action buttons
+#define BTN_SMALL_RADIUS_FRAC   0.055f  // small utility buttons (pause, music)
 
-// Button positions as fractions of screen (x=right, y=top)
-// Diamond layout: A=right, B=bottom
-#define BTN_A_CX_FRAC		0.90f   // Attack / Confirm
-#define BTN_A_CY_FRAC		0.65f
-#define BTN_B_CX_FRAC		0.82f   // Back
-#define BTN_B_CY_FRAC		0.75f
-#define BTN_PREV_CX_FRAC	0.75f   // Previous weapon
-#define BTN_PREV_CY_FRAC	0.85f
-#define BTN_NEXT_CX_FRAC	0.90f   // Next weapon
-#define BTN_NEXT_CY_FRAC	0.85f
-#define BTN_PAUSE_CX_FRAC	0.95f   // Pause
-#define BTN_PAUSE_CY_FRAC	0.08f
+// Button positions (cx, cy as fractions of screen w/h)
+// Diamond on right side: Attack(right), Back(left), Radar(top)
+// Weapon row below: Prev(left), Next(right)
+// Small row at top-right: Music, Pause
+#define BTN_A_CX_FRAC       0.88f   // Attack
+#define BTN_A_CY_FRAC       0.72f
+#define BTN_B_CX_FRAC       0.73f   // Back
+#define BTN_B_CY_FRAC       0.72f
+#define BTN_PREV_CX_FRAC    0.73f   // PrevWeapon
+#define BTN_PREV_CY_FRAC    0.88f
+#define BTN_NEXT_CX_FRAC    0.88f   // NextWeapon
+#define BTN_NEXT_CY_FRAC    0.88f
+#define BTN_PAUSE_CX_FRAC   0.96f   // Pause (small, top-right corner)
+#define BTN_PAUSE_CY_FRAC   0.08f
+#define BTN_RADAR_CX_FRAC   0.80f   // Radar (top of diamond)
+#define BTN_RADAR_CY_FRAC   0.55f
+#define BTN_MUSIC_CX_FRAC   0.87f   // Music (small, near Pause)
+#define BTN_MUSIC_CY_FRAC   0.08f
 
 //------------------------------------------------------------
 // State
@@ -56,16 +75,10 @@ typedef struct
 static TouchPoint   gTouchPoints[MAX_TOUCH_POINTS];
 static float        gJoystickDX = 0, gJoystickDY = 0;   // normalized -1..1
 
-// Which finger is driving the joystick (-1 = none)
 static SDL_FingerID gJoystickFinger = 0;
 static bool         gJoystickFingerActive = false;
 
-// Button pressed states
-static bool gBtnAttack    = false;
-static bool gBtnBack      = false;
-static bool gBtnPause     = false;
-static bool gBtnPrevWeapon = false;
-static bool gBtnNextWeapon = false;
+static bool gBtnStates[NUM_BUTTONS];
 
 //------------------------------------------------------------
 
@@ -80,69 +93,49 @@ static void UpdateScreenDimensions(void)
 
 static bool IsInJoystickZone(float x, float y)
 {
-	(void)y;  // y not needed: joystick zone is the left 40% of screen width
+	(void)y;
 	UpdateScreenDimensions();
-	// Left 40% of screen
 	return x < gScreenW * 0.4f;
 }
 
-static bool IsInButtonA(float x, float y)
+// Returns true if (x,y) is within radius r of (cx,cy)
+static bool IsInCircle(float x, float y, float cx, float cy, float r)
 {
-	UpdateScreenDimensions();
-	float cx = gScreenW * BTN_A_CX_FRAC;
-	float cy = gScreenH * BTN_A_CY_FRAC;
-	float r  = gScreenH * BTN_RADIUS_FRAC * 1.5f;
-	float dx = x - cx, dy = y - cy;
-	return dx*dx + dy*dy < r*r;
-}
-
-static bool IsInButtonB(float x, float y)
-{
-	UpdateScreenDimensions();
-	float cx = gScreenW * BTN_B_CX_FRAC;
-	float cy = gScreenH * BTN_B_CY_FRAC;
-	float r  = gScreenH * BTN_RADIUS_FRAC * 1.5f;
-	float dx = x - cx, dy = y - cy;
-	return dx*dx + dy*dy < r*r;
-}
-
-static bool IsInButtonPause(float x, float y)
-{
-	UpdateScreenDimensions();
-	float cx = gScreenW * BTN_PAUSE_CX_FRAC;
-	float cy = gScreenH * BTN_PAUSE_CY_FRAC;
-	float r  = gScreenH * BTN_RADIUS_FRAC * 1.5f;
-	float dx = x - cx, dy = y - cy;
-	return dx*dx + dy*dy < r*r;
-}
-
-static bool IsInButtonPrevWeapon(float x, float y)
-{
-	UpdateScreenDimensions();
-	float cx = gScreenW * BTN_PREV_CX_FRAC;
-	float cy = gScreenH * BTN_PREV_CY_FRAC;
-	float r  = gScreenH * BTN_RADIUS_FRAC * 1.5f;
-	float dx = x - cx, dy = y - cy;
-	return dx*dx + dy*dy < r*r;
-}
-
-static bool IsInButtonNextWeapon(float x, float y)
-{
-	UpdateScreenDimensions();
-	float cx = gScreenW * BTN_NEXT_CX_FRAC;
-	float cy = gScreenH * BTN_NEXT_CY_FRAC;
-	float r  = gScreenH * BTN_RADIUS_FRAC * 1.5f;
 	float dx = x - cx, dy = y - cy;
 	return dx*dx + dy*dy < r*r;
 }
 
 static void UpdateButtonStates(void)
 {
-	gBtnAttack     = false;
-	gBtnBack       = false;
-	gBtnPause      = false;
-	gBtnPrevWeapon = false;
-	gBtnNextWeapon = false;
+	for (int i = 0; i < NUM_BUTTONS; i++)
+		gBtnStates[i] = false;
+
+	UpdateScreenDimensions();
+	float sw = (float)gScreenW, sh = (float)gScreenH;
+	float mainR  = sh * BTN_RADIUS_FRAC * 1.5f;
+	float smallR = sh * BTN_SMALL_RADIUS_FRAC * 1.5f;
+
+	float btnCX[NUM_BUTTONS] = {
+		sw * BTN_A_CX_FRAC,
+		sw * BTN_B_CX_FRAC,
+		sw * BTN_PREV_CX_FRAC,
+		sw * BTN_NEXT_CX_FRAC,
+		sw * BTN_PAUSE_CX_FRAC,
+		sw * BTN_RADAR_CX_FRAC,
+		sw * BTN_MUSIC_CX_FRAC,
+	};
+	float btnCY[NUM_BUTTONS] = {
+		sh * BTN_A_CY_FRAC,
+		sh * BTN_B_CY_FRAC,
+		sh * BTN_PREV_CY_FRAC,
+		sh * BTN_NEXT_CY_FRAC,
+		sh * BTN_PAUSE_CY_FRAC,
+		sh * BTN_RADAR_CY_FRAC,
+		sh * BTN_MUSIC_CY_FRAC,
+	};
+	float btnR[NUM_BUTTONS] = {
+		mainR, mainR, mainR, mainR, smallR, mainR, smallR,
+	};
 
 	for (int i = 0; i < MAX_TOUCH_POINTS; i++)
 	{
@@ -150,11 +143,11 @@ static void UpdateButtonStates(void)
 			continue;
 		float x = gTouchPoints[i].currentX;
 		float y = gTouchPoints[i].currentY;
-		if (IsInButtonA(x, y))          gBtnAttack = true;
-		if (IsInButtonB(x, y))          gBtnBack   = true;
-		if (IsInButtonPause(x, y))      gBtnPause  = true;
-		if (IsInButtonPrevWeapon(x, y)) gBtnPrevWeapon = true;
-		if (IsInButtonNextWeapon(x, y)) gBtnNextWeapon = true;
+		for (int b = 0; b < NUM_BUTTONS; b++)
+		{
+			if (IsInCircle(x, y, btnCX[b], btnCY[b], btnR[b]))
+				gBtnStates[b] = true;
+		}
 	}
 }
 
@@ -170,7 +163,6 @@ static void UpdateJoystick(void)
 	UpdateScreenDimensions();
 	float radius = gScreenH * JOYSTICK_RADIUS_FRAC;
 
-	// Find the active joystick finger
 	for (int i = 0; i < MAX_TOUCH_POINTS; i++)
 	{
 		if (!gTouchPoints[i].active || gTouchPoints[i].fingerID != gJoystickFinger)
@@ -194,7 +186,8 @@ static void UpdateJoystick(void)
 		return;
 	}
 
-	// Finger not found (shouldn't happen)
+	// Finger not found — clear state (can happen if FINGER_UP fingerID mismatched)
+	gJoystickFingerActive = false;
 	gJoystickDX = 0;
 	gJoystickDY = 0;
 }
@@ -206,9 +199,9 @@ static void UpdateJoystick(void)
 void TouchControls_Init(void)
 {
 	SDL_memset(gTouchPoints, 0, sizeof(gTouchPoints));
+	SDL_memset(gBtnStates, 0, sizeof(gBtnStates));
 	gJoystickFingerActive = false;
 	gJoystickDX = gJoystickDY = 0;
-	gBtnAttack = gBtnBack = gBtnPause = gBtnPrevWeapon = gBtnNextWeapon = false;
 }
 
 void TouchControls_HandleEvent(const SDL_Event* event)
@@ -217,12 +210,10 @@ void TouchControls_HandleEvent(const SDL_Event* event)
 	{
 	case SDL_EVENT_FINGER_DOWN:
 	{
-		// Convert normalized SDL finger coords to pixels
 		UpdateScreenDimensions();
 		float px = event->tfinger.x * gScreenW;
 		float py = event->tfinger.y * gScreenH;
 
-		// Find a free slot
 		for (int i = 0; i < MAX_TOUCH_POINTS; i++)
 		{
 			if (!gTouchPoints[i].active)
@@ -238,6 +229,8 @@ void TouchControls_HandleEvent(const SDL_Event* event)
 				{
 					gJoystickFinger       = event->tfinger.fingerID;
 					gJoystickFingerActive = true;
+					gJoystickDX = 0;    // reset stale values from previous touch
+					gJoystickDY = 0;
 				}
 				break;
 			}
@@ -276,13 +269,17 @@ void TouchControls_HandleEvent(const SDL_Event* event)
 				gTouchPoints[i].currentX = px;
 				gTouchPoints[i].currentY = py;
 				gTouchPoints[i].active = false;
-
-				if (gJoystickFingerActive && gJoystickFinger == event->tfinger.fingerID)
-				{
-					gJoystickFingerActive = false;
-				}
 				break;
 			}
+		}
+		// Always clear joystick when the joystick finger lifts, even if touch-point
+		// lookup failed due to a fingerID mismatch (which would otherwise leave the
+		// thumb indicator stuck at the edge).
+		if (gJoystickFingerActive && gJoystickFinger == event->tfinger.fingerID)
+		{
+			gJoystickFingerActive = false;
+			gJoystickDX = 0;
+			gJoystickDY = 0;
 		}
 		break;
 	}
@@ -318,20 +315,26 @@ bool TouchControls_IsPressed(int needID)
 	case kNeed_Attack:
 	case kNeed_UIConfirm:
 	case kNeed_UINext:
-		return gBtnAttack;
+		return gBtnStates[BTN_IDX_ATTACK];
 
 	case kNeed_UIBack:
 	case kNeed_UIPrev:
-		return gBtnBack;
+		return gBtnStates[BTN_IDX_BACK];
 
 	case kNeed_UIPause:
-		return gBtnPause;
+		return gBtnStates[BTN_IDX_PAUSE];
 
 	case kNeed_PrevWeapon:
-		return gBtnPrevWeapon;
+		return gBtnStates[BTN_IDX_PREV];
 
 	case kNeed_NextWeapon:
-		return gBtnNextWeapon;
+		return gBtnStates[BTN_IDX_NEXT];
+
+	case kNeed_Radar:
+		return gBtnStates[BTN_IDX_RADAR];
+
+	case kNeed_ToggleMusic:
+		return gBtnStates[BTN_IDX_MUSIC];
 
 	default:
 		return false;
@@ -341,7 +344,7 @@ bool TouchControls_IsPressed(int needID)
 extern void GLRender_DrawTouchControlsOverlay(float screenW, float screenH,
                                                float joyCX, float joyCY, float joyR,
                                                float joyThumbX, float joyThumbY, bool joyActive,
-                                               float btn[5][2], float btnR, bool btnPressed[5]);
+                                               float btn[NUM_BUTTONS][3], bool btnPressed[NUM_BUTTONS]);
 
 void TouchControls_DrawOverlay(void)
 {
@@ -353,24 +356,36 @@ void TouchControls_DrawOverlay(void)
 	float joyCX = sw * JOYSTICK_CX_FRAC;
 	float joyCY = sh * JOYSTICK_CY_FRAC;
 
-	// Compute thumb position
-	float thumbX = joyCX + gJoystickDX * joyR;
-	float thumbY = joyCY + gJoystickDY * joyR;
+	// Clamp thumb to joystick radius
+	float thumbDX = gJoystickDX * joyR;
+	float thumbDY = gJoystickDY * joyR;
+	float thumbDist = sqrtf(thumbDX*thumbDX + thumbDY*thumbDY);
+	if (thumbDist > joyR)
+	{
+		thumbDX = thumbDX / thumbDist * joyR;
+		thumbDY = thumbDY / thumbDist * joyR;
+	}
+	float thumbX = joyCX + thumbDX;
+	float thumbY = joyCY + thumbDY;
 
-	float btnR = sh * BTN_RADIUS_FRAC;
-	float btn[5][2] = {
-		{ sw * BTN_A_CX_FRAC,    sh * BTN_A_CY_FRAC    },
-		{ sw * BTN_B_CX_FRAC,    sh * BTN_B_CY_FRAC    },
-		{ sw * BTN_PREV_CX_FRAC, sh * BTN_PREV_CY_FRAC },
-		{ sw * BTN_NEXT_CX_FRAC, sh * BTN_NEXT_CY_FRAC },
-		{ sw * BTN_PAUSE_CX_FRAC,sh * BTN_PAUSE_CY_FRAC},
+	float mainR  = sh * BTN_RADIUS_FRAC;
+	float smallR = sh * BTN_SMALL_RADIUS_FRAC;
+
+	// btn[i] = { cx, cy, radius }
+	float btn[NUM_BUTTONS][3] = {
+		{ sw * BTN_A_CX_FRAC,     sh * BTN_A_CY_FRAC,     mainR  },   // Attack
+		{ sw * BTN_B_CX_FRAC,     sh * BTN_B_CY_FRAC,     mainR  },   // Back
+		{ sw * BTN_PREV_CX_FRAC,  sh * BTN_PREV_CY_FRAC,  mainR  },   // PrevWeapon
+		{ sw * BTN_NEXT_CX_FRAC,  sh * BTN_NEXT_CY_FRAC,  mainR  },   // NextWeapon
+		{ sw * BTN_PAUSE_CX_FRAC, sh * BTN_PAUSE_CY_FRAC, smallR },   // Pause
+		{ sw * BTN_RADAR_CX_FRAC, sh * BTN_RADAR_CY_FRAC, mainR  },   // Radar
+		{ sw * BTN_MUSIC_CX_FRAC, sh * BTN_MUSIC_CY_FRAC, smallR },   // Music
 	};
-	bool pressed[5] = { gBtnAttack, gBtnBack, gBtnPrevWeapon, gBtnNextWeapon, gBtnPause };
 
 	GLRender_DrawTouchControlsOverlay(sw, sh,
 		joyCX, joyCY, joyR,
 		thumbX, thumbY, gJoystickFingerActive,
-		btn, btnR, pressed);
+		btn, gBtnStates);
 }
 
 #endif // __ANDROID__

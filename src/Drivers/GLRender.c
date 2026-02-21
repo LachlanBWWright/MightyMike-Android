@@ -159,8 +159,10 @@ static GLuint GLES_CreateShaderProgram(void)
 
 #ifdef __ANDROID__
 #include <math.h>
+#include "touchcontrols.h"  // NUM_BUTTONS
+
 // Draw a filled polygon (triangle fan) in screen-pixel coordinates.
-// Caller must have set up projection matrix, bound white texture, set color uniform.
+// Caller must have already bound white texture, set color uniform, enabled blend.
 // segments must be <= 62 (array holds segments+2 vertices, max 64).
 static void GLES_DrawFilledCircle(float cx, float cy, float radius, int segments,
                                   float screenW, float screenH)
@@ -209,12 +211,134 @@ static void GLES_DrawFilledCircle(float cx, float cy, float radius, int segments
 #undef GLES_CIRCLE_MAX_VERTS
 }
 
-// Draw touch control overlay (joystick + buttons) on top of the game frame.
+// Draw a filled rotated rectangle centered at (cx, cy) with half-extents (hw, hh),
+// rotated by `angle` radians.
+static void GLES_DrawRect(float cx, float cy, float hw, float hh, float angle,
+                          float screenW, float screenH)
+{
+	float cosA = cosf(angle), sinA = sinf(angle);
+	// Four corners of the rotated rectangle (CCW order)
+	float verts[4][4] = {
+		{ cx + hw*cosA - hh*sinA,  cy + hw*sinA + hh*cosA,  0.5f, 0.5f },
+		{ cx - hw*cosA - hh*sinA,  cy - hw*sinA + hh*cosA,  0.5f, 0.5f },
+		{ cx - hw*cosA + hh*sinA,  cy - hw*sinA - hh*cosA,  0.5f, 0.5f },
+		{ cx + hw*cosA + hh*sinA,  cy + hw*sinA - hh*cosA,  0.5f, 0.5f },
+	};
+	float mvp[16] = {
+		2.0f/screenW,  0,            0, 0,
+		0,            -2.0f/screenH, 0, 0,
+		0,             0,           -1, 0,
+		-1.0f,          1.0f,         0, 1,
+	};
+	glUniformMatrix4fv(gUniformMVP, 1, GL_FALSE, mvp);
+	glBindVertexArray(gQuadVAO);
+	glBindBuffer(GL_ARRAY_BUFFER, gQuadVBO);
+	glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)sizeof(verts), verts, GL_STREAM_DRAW);
+	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4*(GLsizei)sizeof(float), (void*)0);
+	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4*(GLsizei)sizeof(float), (void*)(2*sizeof(float)));
+	glEnableVertexAttribArray(0);
+	glEnableVertexAttribArray(1);
+	// gQuadIBO is bound inside gQuadVAO: indices [0,1,2,0,2,3]
+	glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, 0);
+	glBindVertexArray(0);
+}
+
+// Draw a filled triangle with three screen-space vertices.
+static void GLES_DrawTriangle(float x0, float y0, float x1, float y1, float x2, float y2,
+                              float screenW, float screenH)
+{
+	float verts[3][4] = {
+		{ x0, y0, 0.5f, 0.5f },
+		{ x1, y1, 0.5f, 0.5f },
+		{ x2, y2, 0.5f, 0.5f },
+	};
+	float mvp[16] = {
+		2.0f/screenW,  0,            0, 0,
+		0,            -2.0f/screenH, 0, 0,
+		0,             0,           -1, 0,
+		-1.0f,          1.0f,         0, 1,
+	};
+	glUniformMatrix4fv(gUniformMVP, 1, GL_FALSE, mvp);
+	glBindVertexArray(gQuadVAO);
+	glBindBuffer(GL_ARRAY_BUFFER, gQuadVBO);
+	glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)sizeof(verts), verts, GL_STREAM_DRAW);
+	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4*(GLsizei)sizeof(float), (void*)0);
+	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4*(GLsizei)sizeof(float), (void*)(2*sizeof(float)));
+	glEnableVertexAttribArray(0);
+	glEnableVertexAttribArray(1);
+	glDrawArrays(GL_TRIANGLES, 0, 3);
+	glBindVertexArray(0);
+}
+
+// Draw a geometric icon inside a button circle.
+// btnIdx: 0=Attack, 1=Back, 2=Prev, 3=Next, 4=Pause, 5=Radar, 6=Music
+// (cx,cy) = button center, r = button radius
+static void GLES_DrawButtonIcon(int btnIdx, float cx, float cy, float r,
+                                float screenW, float screenH)
+{
+	static const float kPiOver4 = 0.7853982f;  // 45 degrees in radians
+	glUniform4f(gUniformColor, 1.0f, 1.0f, 1.0f, 0.85f);
+
+	switch (btnIdx)
+	{
+	case 0: // Attack: plus/cross (sword attack)
+		GLES_DrawRect(cx, cy, r*0.17f, r*0.58f, 0.0f,      screenW, screenH);
+		GLES_DrawRect(cx, cy, r*0.58f, r*0.17f, 0.0f,      screenW, screenH);
+		break;
+
+	case 1: // Back: X shape (cancel)
+		GLES_DrawRect(cx, cy, r*0.14f, r*0.55f,  kPiOver4, screenW, screenH);
+		GLES_DrawRect(cx, cy, r*0.14f, r*0.55f, -kPiOver4, screenW, screenH);
+		break;
+
+	case 2: // PrevWeapon: left-pointing triangle (◄)
+		GLES_DrawTriangle(cx - r*0.40f, cy,
+		                  cx + r*0.28f, cy - r*0.38f,
+		                  cx + r*0.28f, cy + r*0.38f,
+		                  screenW, screenH);
+		break;
+
+	case 3: // NextWeapon: right-pointing triangle (►)
+		GLES_DrawTriangle(cx + r*0.40f, cy,
+		                  cx - r*0.28f, cy - r*0.38f,
+		                  cx - r*0.28f, cy + r*0.38f,
+		                  screenW, screenH);
+		break;
+
+	case 4: // Pause: two vertical bars (‖)
+		GLES_DrawRect(cx - r*0.18f, cy, r*0.10f, r*0.38f, 0.0f, screenW, screenH);
+		GLES_DrawRect(cx + r*0.18f, cy, r*0.10f, r*0.38f, 0.0f, screenW, screenH);
+		break;
+
+	case 5: // Radar: outer ring + center dot (radar ping)
+		// Outer white circle
+		GLES_DrawFilledCircle(cx, cy, r*0.58f, 16, screenW, screenH);
+		// Dark overlay to create the ring gap
+		glUniform4f(gUniformColor, 0.0f, 0.0f, 0.2f, 0.72f);
+		GLES_DrawFilledCircle(cx, cy, r*0.38f, 16, screenW, screenH);
+		// White center dot
+		glUniform4f(gUniformColor, 1.0f, 1.0f, 1.0f, 0.85f);
+		GLES_DrawFilledCircle(cx, cy, r*0.14f, 10, screenW, screenH);
+		break;
+
+	case 6: // Music: three horizontal bars (simplified ♪)
+		GLES_DrawRect(cx, cy - r*0.22f, r*0.36f, r*0.07f, 0.0f, screenW, screenH);
+		GLES_DrawRect(cx, cy,           r*0.36f, r*0.07f, 0.0f, screenW, screenH);
+		GLES_DrawRect(cx, cy + r*0.22f, r*0.36f, r*0.07f, 0.0f, screenW, screenH);
+		break;
+
+	default:
+		break;
+	}
+}
+
+// Draw touch control overlay (joystick + buttons with icons) on top of the game frame.
 // Called from GLRender_Present() after the game framebuffer quad.
+// btn[i] = { cx, cy, radius }
 void GLRender_DrawTouchControlsOverlay(float screenW, float screenH,
                                        float joyCX, float joyCY, float joyR,
                                        float joyThumbX, float joyThumbY, bool joyActive,
-                                       float btn[5][2], float btnR, bool btnPressed[5])
+                                       float btn[NUM_BUTTONS][3], bool btnPressed[NUM_BUTTONS])
 {
 	// Switch to full-window viewport so touch controls appear over the entire screen,
 	// including letterbox bars.  Restore the game viewport afterwards.
@@ -225,43 +349,59 @@ void GLRender_DrawTouchControlsOverlay(float screenW, float screenH,
 	glBindTexture(GL_TEXTURE_2D, gWhiteTex);
 	glUseProgram(gShaderProgram);
 
-	// --- Joystick outer ring (semi-transparent dark) ---
-	glUniform4f(gUniformColor, 0.2f, 0.2f, 0.2f, 0.3f);
+	// --- Joystick base ring ---
+	// Outer white ring
+	glUniform4f(gUniformColor, 0.8f, 0.8f, 0.8f, 0.40f);
 	GLES_DrawFilledCircle(joyCX, joyCY, joyR, 24, screenW, screenH);
+	// Dark fill to make a ring shape
+	glUniform4f(gUniformColor, 0.1f, 0.1f, 0.1f, 0.25f);
+	GLES_DrawFilledCircle(joyCX, joyCY, joyR * 0.90f, 24, screenW, screenH);
 
-	// --- Joystick ring outline ---
-	// Draw as a slightly larger filled circle minus the inner to fake an outline
-	// (simpler than a line loop on GLES3 which has no width guarantee)
-	glUniform4f(gUniformColor, 0.8f, 0.8f, 0.8f, 0.5f);
-	GLES_DrawFilledCircle(joyCX, joyCY, joyR, 24, screenW, screenH);
-	glUniform4f(gUniformColor, 0.2f, 0.2f, 0.2f, 0.3f);
-	GLES_DrawFilledCircle(joyCX, joyCY, joyR * 0.92f, 24, screenW, screenH);
-
-	// --- Joystick thumb indicator ---
+	// --- Joystick thumb indicator (only when finger is active) ---
 	if (joyActive)
 	{
-		glUniform4f(gUniformColor, 0.7f, 0.7f, 0.9f, 0.5f);
-		GLES_DrawFilledCircle(joyThumbX, joyThumbY, joyR * 0.35f, 16, screenW, screenH);
+		glUniform4f(gUniformColor, 0.7f, 0.7f, 1.0f, 0.70f);
+		GLES_DrawFilledCircle(joyThumbX, joyThumbY, joyR * 0.40f, 20, screenW, screenH);
+		// Outline on thumb (slightly larger, brighter)
+		glUniform4f(gUniformColor, 1.0f, 1.0f, 1.0f, 0.50f);
+		GLES_DrawFilledCircle(joyThumbX, joyThumbY, joyR * 0.40f, 20, screenW, screenH);
+		glUniform4f(gUniformColor, 0.7f, 0.7f, 1.0f, 0.70f);
+		GLES_DrawFilledCircle(joyThumbX, joyThumbY, joyR * 0.33f, 20, screenW, screenH);
 	}
 
-	// --- Action buttons ---
-	static const float kBtnColors[5][4] = {
-		{ 0.9f, 0.5f, 0.2f, 0.45f },   // Attack: orange
-		{ 0.3f, 0.6f, 0.9f, 0.40f },   // Back:   blue
-		{ 0.5f, 0.9f, 0.5f, 0.40f },   // Prev:   green
-		{ 0.5f, 0.9f, 0.5f, 0.40f },   // Next:   green
-		{ 0.9f, 0.9f, 0.9f, 0.35f },   // Pause:  grey
+	// --- Action buttons --- //
+	// btn[i] = { cx, cy, r }
+	// 0=Attack(orange), 1=Back(blue), 2=Prev(green), 3=Next(green),
+	// 4=Pause(grey), 5=Radar(yellow), 6=Music(grey)
+	static const float kBtnColors[NUM_BUTTONS][4] = {
+		{ 0.90f, 0.45f, 0.15f, 0.45f },   // 0 Attack:  orange
+		{ 0.25f, 0.55f, 0.90f, 0.40f },   // 1 Back:    blue
+		{ 0.35f, 0.85f, 0.45f, 0.40f },   // 2 Prev:    green
+		{ 0.35f, 0.85f, 0.45f, 0.40f },   // 3 Next:    green
+		{ 0.80f, 0.80f, 0.80f, 0.35f },   // 4 Pause:   grey
+		{ 0.90f, 0.80f, 0.20f, 0.40f },   // 5 Radar:   yellow
+		{ 0.65f, 0.65f, 0.65f, 0.32f },   // 6 Music:   grey
 	};
-	for (int i = 0; i < 5; i++)
+
+	for (int i = 0; i < NUM_BUTTONS; i++)
 	{
-		float alpha = btnPressed[i] ? 0.8f : kBtnColors[i][3];
-		glUniform4f(gUniformColor, kBtnColors[i][0], kBtnColors[i][1], kBtnColors[i][2], alpha);
-		GLES_DrawFilledCircle(btn[i][0], btn[i][1], btnR, 20, screenW, screenH);
-		// Outline
-		glUniform4f(gUniformColor, 1.0f, 1.0f, 1.0f, 0.55f);
-		GLES_DrawFilledCircle(btn[i][0], btn[i][1], btnR, 20, screenW, screenH);
-		glUniform4f(gUniformColor, kBtnColors[i][0], kBtnColors[i][1], kBtnColors[i][2], alpha);
-		GLES_DrawFilledCircle(btn[i][0], btn[i][1], btnR * 0.87f, 20, screenW, screenH);
+		float r     = btn[i][2];
+		float bx    = btn[i][0];
+		float by    = btn[i][1];
+		float alpha = btnPressed[i] ? 0.85f : kBtnColors[i][3];
+		float cr    = kBtnColors[i][0];
+		float cg    = kBtnColors[i][1];
+		float cb    = kBtnColors[i][2];
+
+		// Outer ring (white outline)
+		glUniform4f(gUniformColor, 1.0f, 1.0f, 1.0f, 0.50f);
+		GLES_DrawFilledCircle(bx, by, r, 20, screenW, screenH);
+		// Fill
+		glUniform4f(gUniformColor, cr, cg, cb, alpha);
+		GLES_DrawFilledCircle(bx, by, r * 0.88f, 20, screenW, screenH);
+
+		// Icon
+		GLES_DrawButtonIcon(i, bx, by, r, screenW, screenH);
 	}
 
 	// Restore state

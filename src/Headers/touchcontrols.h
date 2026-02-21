@@ -5,6 +5,8 @@
 #include <SDL3/SDL.h>
 #include <stdbool.h>
 
+#define NUM_BUTTONS 7   // number of on-screen action buttons
+
 void TouchControls_Init(void);
 void TouchControls_HandleEvent(const SDL_Event* event);
 void TouchControls_UpdateNeeds(void);
