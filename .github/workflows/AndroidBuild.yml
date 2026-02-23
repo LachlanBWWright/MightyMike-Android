@@ -56,7 +56,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Delete the existing nightly release + tag so we can recreate it cleanly.
-          gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
+          # Log any failure (e.g. first run when no release exists yet) but don't abort.
+          if ! gh release delete nightly --yes --cleanup-tag 2>&1; then
+            echo "Note: could not delete previous nightly release (may not exist yet)"
+          fi
           gh release create nightly \
             --title "Android Debug Build (Latest)" \
             --notes "Latest Android debug APK built automatically from the \`main\` branch." \

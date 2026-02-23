@@ -5,6 +5,7 @@
 #ifdef __ANDROID__
 
 #include <SDL3/SDL.h>
+#include <float.h>
 #include <math.h>
 
 #include "myglobals.h"
@@ -272,7 +273,7 @@ void TouchControls_HandleEvent(const SDL_Event* event)
 		// never fills up with phantom touches.
 		if (!found)
 		{
-			float minDist = 1e12f;
+			float minDist = FLT_MAX;
 			int   bestIdx = -1;
 			for (int i = 0; i < MAX_TOUCH_POINTS; i++)
 			{
