@@ -1,6 +1,6 @@
 // TOUCH CONTROLS FOR ANDROID
+// Complete rewrite - clean isolated state machine.
 // (C) 2025 Mighty Mike Android Port
-// This file is part of Mighty Mike. https://github.com/jorio/mightymike
 
 #ifdef __ANDROID__
 
@@ -17,173 +17,122 @@
 //------------------------------------------------------------
 // Button indices
 //------------------------------------------------------------
-#define BTN_IDX_ATTACK    0   // kNeed_Attack
-#define BTN_IDX_BACK      1   // kNeed_UIBack / kNeed_UIPrev
-#define BTN_IDX_PREV      2   // kNeed_PrevWeapon
-#define BTN_IDX_NEXT      3   // kNeed_NextWeapon
-#define BTN_IDX_PAUSE     4   // kNeed_UIPause
-#define BTN_IDX_RADAR     5   // kNeed_Radar
-#define BTN_IDX_MUSIC     6   // kNeed_ToggleMusic
-// NUM_BUTTONS is defined in touchcontrols.h
+#define BTN_ATTACK   0   // kNeed_Attack / kNeed_UIConfirm
+#define BTN_BACK     1   // kNeed_UIBack / kNeed_UIPrev
+#define BTN_PREV     2   // kNeed_PrevWeapon
+#define BTN_NEXT     3   // kNeed_NextWeapon
+#define BTN_PAUSE    4   // kNeed_UIPause
+#define BTN_RADAR    5   // kNeed_Radar
+#define BTN_MUSIC    6   // kNeed_ToggleMusic
+// NUM_BUTTONS = 7, defined in touchcontrols.h
 
 //------------------------------------------------------------
-// Layout constants (fractions of screen dimensions)
+// Layout (fractions of screen dimensions)
 //------------------------------------------------------------
 
-#define MAX_TOUCH_POINTS        10
+// Joystick
+#define JOY_RADIUS_FRAC   0.14f   // fraction of screen height
+#define JOY_DEFAULT_CX    0.15f   // default ring center X (fraction of width)
+#define JOY_DEFAULT_CY    0.72f   // default ring center Y (fraction of height)
+#define JOY_DEAD_ZONE     0.08f   // dead zone as fraction of joystick radius
+#define JOY_ZONE_FRAC     0.40f   // left N% of screen is the joystick zone
 
-// Joystick (left side)
-#define JOYSTICK_RADIUS_FRAC    0.12f
-#define JOYSTICK_CX_FRAC        0.15f
-#define JOYSTICK_CY_FRAC        0.75f
-#define JOYSTICK_DEAD_ZONE      0.08f   // fraction of joystick radius
-
-// Button radii (fraction of screen height)
-#define BTN_RADIUS_FRAC         0.09f   // main action buttons
-#define BTN_SMALL_RADIUS_FRAC   0.055f  // small utility buttons (pause, music)
-
-// Button positions (cx, cy as fractions of screen w/h)
-#define BTN_A_CX_FRAC       0.88f   // Attack
-#define BTN_A_CY_FRAC       0.72f
-#define BTN_B_CX_FRAC       0.73f   // Back
-#define BTN_B_CY_FRAC       0.72f
-#define BTN_PREV_CX_FRAC    0.73f   // PrevWeapon
-#define BTN_PREV_CY_FRAC    0.88f
-#define BTN_NEXT_CX_FRAC    0.88f   // NextWeapon
-#define BTN_NEXT_CY_FRAC    0.88f
-#define BTN_PAUSE_CX_FRAC   0.96f   // Pause (small, top-right corner)
-#define BTN_PAUSE_CY_FRAC   0.08f
-#define BTN_RADAR_CX_FRAC   0.80f   // Radar (top of diamond)
-#define BTN_RADAR_CY_FRAC   0.55f
-#define BTN_MUSIC_CX_FRAC   0.87f   // Music (small, near Pause)
-#define BTN_MUSIC_CY_FRAC   0.08f
+// Button centres and sizes
+static const float kBtnCX[NUM_BUTTONS]    = { 0.88f, 0.73f, 0.73f, 0.88f, 0.96f, 0.80f, 0.87f };
+static const float kBtnCY[NUM_BUTTONS]    = { 0.72f, 0.72f, 0.88f, 0.88f, 0.08f, 0.55f, 0.08f };
+static const float kBtnRadFrac[NUM_BUTTONS] = {
+    0.09f, 0.09f, 0.09f, 0.09f,   // Attack, Back, Prev, Next  - full size
+    0.055f,                         // Pause                     - small
+    0.09f,                          // Radar                     - full size
+    0.055f                          // Music                     - small
+};
+// Hit radius is slightly larger than visual radius for usability
+#define BTN_HIT_SCALE  1.35f
 
 //------------------------------------------------------------
 // State
 //------------------------------------------------------------
 
-typedef struct
-{
-	SDL_FingerID    fingerID;
-	bool            active;
-	bool            isJoystick;   // true if this touch started in the joystick zone
-	float           startX, startY;
-	float           currentX, currentY;
-} TouchPoint;
+#define MAX_TOUCHES   10
 
-static TouchPoint   gTouchPoints[MAX_TOUCH_POINTS];
-static float        gJoystickDX = 0, gJoystickDY = 0;   // normalized -1..1
-static bool         gJoystickFingerActive = false;
+// ---- Joystick: completely isolated from button touches ----
+// Uses a "floating" joystick: the ring appears where the finger first lands in the
+// joystick zone, and the thumb tracks relative to that anchor point.  When the
+// finger lifts the ring returns to its default visual position.
+typedef struct {
+    bool         active;
+    SDL_FingerID fid;         // fingerID we are tracking
+    float        anchorX;     // where the finger first touched (ring centre)
+    float        anchorY;
+    float        currentX;    // current finger position
+    float        currentY;
+} JoystickState;
 
-static bool gBtnStates[NUM_BUTTONS];
+static JoystickState gJoy;
+
+// ---- Non-joystick touches (used for button hit testing) ----
+typedef struct {
+    bool         active;
+    SDL_FingerID fid;
+    float        x, y;        // current position in pixels
+} Touch;
+
+static Touch gTouches[MAX_TOUCHES];
+
+// ---- Cached normalised joystick direction (updated each frame in UpdateNeeds) ----
+static float gJoyNormDX = 0.0f;
+static float gJoyNormDY = 0.0f;
+
+// ---- Cached screen size ----
+static int gScreenW = 1;
+static int gScreenH = 1;
 
 //------------------------------------------------------------
+// Internal helpers
+//------------------------------------------------------------
 
-static int gScreenW = 0, gScreenH = 0;
-
-static void UpdateScreenDimensions(void)
+static void RefreshScreen(void)
 {
-	SDL_GetWindowSizeInPixels(gSDLWindow, &gScreenW, &gScreenH);
-	if (gScreenW <= 0) gScreenW = 640;
-	if (gScreenH <= 0) gScreenH = 480;
+    SDL_GetWindowSizeInPixels(gSDLWindow, &gScreenW, &gScreenH);
+    if (gScreenW < 1) gScreenW = 640;
+    if (gScreenH < 1) gScreenH = 480;
 }
 
-static bool IsInJoystickZone(float x, float y)
+// Is (px,py) in the left-side joystick zone?
+static bool InJoystickZone(float px, float py)
 {
-	(void)y;
-	UpdateScreenDimensions();
-	return x < gScreenW * 0.4f;
+    (void)py;
+    return px < (float)gScreenW * JOY_ZONE_FRAC;
 }
 
-// Returns true if (x,y) is within radius r of (cx,cy)
-static bool IsInCircle(float x, float y, float cx, float cy, float r)
+// Find the first inactive slot; returns -1 if full.
+static int FindFreeTouch(void)
 {
-	float dx = x - cx, dy = y - cy;
-	return dx*dx + dy*dy < r*r;
+    for (int i = 0; i < MAX_TOUCHES; i++)
+        if (!gTouches[i].active) return i;
+    return -1;
 }
 
-static void UpdateButtonStates(void)
+// Find a touch by fingerID; returns -1 if not found.
+static int FindTouchByFID(SDL_FingerID fid)
 {
-	for (int i = 0; i < NUM_BUTTONS; i++)
-		gBtnStates[i] = false;
-
-	UpdateScreenDimensions();
-	float sw = (float)gScreenW, sh = (float)gScreenH;
-	float mainR  = sh * BTN_RADIUS_FRAC * 1.5f;
-	float smallR = sh * BTN_SMALL_RADIUS_FRAC * 1.5f;
-
-	float btnCX[NUM_BUTTONS] = {
-		sw * BTN_A_CX_FRAC,
-		sw * BTN_B_CX_FRAC,
-		sw * BTN_PREV_CX_FRAC,
-		sw * BTN_NEXT_CX_FRAC,
-		sw * BTN_PAUSE_CX_FRAC,
-		sw * BTN_RADAR_CX_FRAC,
-		sw * BTN_MUSIC_CX_FRAC,
-	};
-	float btnCY[NUM_BUTTONS] = {
-		sh * BTN_A_CY_FRAC,
-		sh * BTN_B_CY_FRAC,
-		sh * BTN_PREV_CY_FRAC,
-		sh * BTN_NEXT_CY_FRAC,
-		sh * BTN_PAUSE_CY_FRAC,
-		sh * BTN_RADAR_CY_FRAC,
-		sh * BTN_MUSIC_CY_FRAC,
-	};
-	float btnR[NUM_BUTTONS] = {
-		mainR, mainR, mainR, mainR, smallR, mainR, smallR,
-	};
-
-	for (int i = 0; i < MAX_TOUCH_POINTS; i++)
-	{
-		if (!gTouchPoints[i].active)
-			continue;
-		float x = gTouchPoints[i].currentX;
-		float y = gTouchPoints[i].currentY;
-		for (int b = 0; b < NUM_BUTTONS; b++)
-		{
-			if (IsInCircle(x, y, btnCX[b], btnCY[b], btnR[b]))
-				gBtnStates[b] = true;
-		}
-	}
+    for (int i = 0; i < MAX_TOUCHES; i++)
+        if (gTouches[i].active && gTouches[i].fid == fid) return i;
+    return -1;
 }
 
-// Derive joystick state entirely from gTouchPoints[].isJoystick slots.
-// This avoids all fingerID-mismatch issues: once a slot is marked isJoystick,
-// the joystick tracks that slot until it goes inactive, regardless of fingerID.
-static void UpdateJoystick(void)
+// Find nearest active touch by position (positional fallback for ID mismatch).
+static int FindNearestTouch(float px, float py)
 {
-	UpdateScreenDimensions();
-	float radius = gScreenH * JOYSTICK_RADIUS_FRAC;
-
-	for (int i = 0; i < MAX_TOUCH_POINTS; i++)
-	{
-		if (!gTouchPoints[i].active || !gTouchPoints[i].isJoystick)
-			continue;
-
-		float dx = gTouchPoints[i].currentX - gTouchPoints[i].startX;
-		float dy = gTouchPoints[i].currentY - gTouchPoints[i].startY;
-		float dist = sqrtf(dx*dx + dy*dy);
-
-		if (dist < radius * JOYSTICK_DEAD_ZONE)
-		{
-			gJoystickDX = 0;
-			gJoystickDY = 0;
-		}
-		else
-		{
-			float normalizer = (dist > radius) ? dist : radius;
-			gJoystickDX = dx / normalizer;
-			gJoystickDY = dy / normalizer;
-		}
-		gJoystickFingerActive = true;
-		return;
-	}
-
-	// No active joystick touch found
-	gJoystickFingerActive = false;
-	gJoystickDX = 0;
-	gJoystickDY = 0;
+    float best = FLT_MAX;
+    int   idx  = -1;
+    for (int i = 0; i < MAX_TOUCHES; i++) {
+        if (!gTouches[i].active) continue;
+        float dx = gTouches[i].x - px, dy = gTouches[i].y - py;
+        float d  = dx*dx + dy*dy;
+        if (d < best) { best = d; idx = i; }
+    }
+    return idx;
 }
 
 //------------------------------------------------------------
@@ -192,162 +141,185 @@ static void UpdateJoystick(void)
 
 void TouchControls_Init(void)
 {
-	SDL_memset(gTouchPoints, 0, sizeof(gTouchPoints));
-	SDL_memset(gBtnStates, 0, sizeof(gBtnStates));
-	gJoystickFingerActive = false;
-	gJoystickDX = gJoystickDY = 0;
+    SDL_memset(&gJoy, 0, sizeof(gJoy));
+    SDL_memset(gTouches, 0, sizeof(gTouches));
+    gJoyNormDX = 0.0f;
+    gJoyNormDY = 0.0f;
 }
 
-void TouchControls_HandleEvent(const SDL_Event* event)
+void TouchControls_HandleEvent(const SDL_Event* ev)
 {
-	switch (event->type)
-	{
-	case SDL_EVENT_FINGER_DOWN:
-	{
-		UpdateScreenDimensions();
-		float px = event->tfinger.x * gScreenW;
-		float py = event->tfinger.y * gScreenH;
+    RefreshScreen();
+    float px  = ev->tfinger.x * (float)gScreenW;
+    float py  = ev->tfinger.y * (float)gScreenH;
+    SDL_FingerID fid = ev->tfinger.fingerID;
 
-		// Check whether a joystick slot is already active
-		bool hasJoystick = false;
-		for (int j = 0; j < MAX_TOUCH_POINTS; j++)
-			if (gTouchPoints[j].active && gTouchPoints[j].isJoystick)
-				{ hasJoystick = true; break; }
+    switch (ev->type)
+    {
+    // ------------------------------------------------------------------
+    case SDL_EVENT_FINGER_DOWN:
+    {
+        if (InJoystickZone(px, py) && !gJoy.active)
+        {
+            // Claim as the joystick touch
+            gJoy.active   = true;
+            gJoy.fid      = fid;
+            gJoy.anchorX  = px;
+            gJoy.anchorY  = py;
+            gJoy.currentX = px;
+            gJoy.currentY = py;
+        }
+        else
+        {
+            // Regular button touch - store in free slot
+            int slot = FindFreeTouch();
+            if (slot >= 0)
+            {
+                gTouches[slot].active = true;
+                gTouches[slot].fid    = fid;
+                gTouches[slot].x      = px;
+                gTouches[slot].y      = py;
+            }
+        }
+        break;
+    }
 
-		for (int i = 0; i < MAX_TOUCH_POINTS; i++)
-		{
-			if (!gTouchPoints[i].active)
-			{
-				gTouchPoints[i].active    = true;
-				gTouchPoints[i].fingerID  = event->tfinger.fingerID;
-				gTouchPoints[i].isJoystick = IsInJoystickZone(px, py) && !hasJoystick;
-				gTouchPoints[i].startX    = px;
-				gTouchPoints[i].startY    = py;
-				gTouchPoints[i].currentX  = px;
-				gTouchPoints[i].currentY  = py;
-				break;
-			}
-		}
-		break;
-	}
+    // ------------------------------------------------------------------
+    case SDL_EVENT_FINGER_MOTION:
+    {
+        if (gJoy.active && gJoy.fid == fid)
+        {
+            gJoy.currentX = px;
+            gJoy.currentY = py;
+        }
+        else
+        {
+            int slot = FindTouchByFID(fid);
+            if (slot >= 0)
+            {
+                gTouches[slot].x = px;
+                gTouches[slot].y = py;
+            }
+        }
+        break;
+    }
 
-	case SDL_EVENT_FINGER_MOTION:
-	{
-		UpdateScreenDimensions();
-		float px = event->tfinger.x * gScreenW;
-		float py = event->tfinger.y * gScreenH;
+    // ------------------------------------------------------------------
+    case SDL_EVENT_FINGER_UP:
+    {
+        // ---- Try to release joystick ----
+        if (gJoy.active && gJoy.fid == fid)
+        {
+            gJoy.active = false;
+            break;
+        }
 
-		for (int i = 0; i < MAX_TOUCH_POINTS; i++)
-		{
-			if (gTouchPoints[i].active && gTouchPoints[i].fingerID == event->tfinger.fingerID)
-			{
-				gTouchPoints[i].currentX = px;
-				gTouchPoints[i].currentY = py;
-				break;
-			}
-		}
-		break;
-	}
+        // ---- Try to release a button touch by fingerID ----
+        {
+            int slot = FindTouchByFID(fid);
+            if (slot >= 0)
+            {
+                gTouches[slot].active = false;
+                break;
+            }
+        }
 
-	case SDL_EVENT_FINGER_UP:
-	{
-		UpdateScreenDimensions();
-		float px = event->tfinger.x * gScreenW;
-		float py = event->tfinger.y * gScreenH;
+        // ---- Positional fallback (fingerID mismatch - Android quirk) ----
+        // Decide whether the lifted finger was the joystick or a button touch by
+        // checking which active touch is closest to the reported lift position.
+        {
+            float joyDist = FLT_MAX;
+            if (gJoy.active)
+            {
+                float dx = gJoy.currentX - px, dy = gJoy.currentY - py;
+                joyDist = dx*dx + dy*dy;
+            }
 
-		// Primary: match by fingerID (the normal path)
-		bool found = false;
-		for (int i = 0; i < MAX_TOUCH_POINTS; i++)
-		{
-			if (gTouchPoints[i].active && gTouchPoints[i].fingerID == event->tfinger.fingerID)
-			{
-				gTouchPoints[i].active     = false;
-				gTouchPoints[i].isJoystick = false;
-				found = true;
-				break;
-			}
-		}
+            int   nearBtn  = FindNearestTouch(px, py);
+            float btnDist  = FLT_MAX;
+            if (nearBtn >= 0)
+            {
+                float dx = gTouches[nearBtn].x - px, dy = gTouches[nearBtn].y - py;
+                btnDist = dx*dx + dy*dy;
+            }
 
-		// Fallback: some Android versions report a different fingerID in FINGER_UP
-		// (the "zombie touch" bug).  Clear the nearest active slot so the array
-		// never fills up with phantom touches.
-		if (!found)
-		{
-			float minDist = FLT_MAX;
-			int   bestIdx = -1;
-			for (int i = 0; i < MAX_TOUCH_POINTS; i++)
-			{
-				if (!gTouchPoints[i].active) continue;
-				float dx = gTouchPoints[i].currentX - px;
-				float dy = gTouchPoints[i].currentY - py;
-				float d2 = dx*dx + dy*dy;
-				if (d2 < minDist) { minDist = d2; bestIdx = i; }
-			}
-			if (bestIdx >= 0)
-			{
-				gTouchPoints[bestIdx].active     = false;
-				gTouchPoints[bestIdx].isJoystick = false;
-			}
-		}
-		break;
-	}
-	}
+            if (gJoy.active && joyDist <= btnDist)
+                gJoy.active = false;
+            else if (nearBtn >= 0)
+                gTouches[nearBtn].active = false;
+        }
+        break;
+    }
+    } // switch
 }
 
 void TouchControls_UpdateNeeds(void)
 {
-	UpdateJoystick();
-	UpdateButtonStates();
+    // Recompute normalised joystick direction every frame so IsPressed queries are cheap.
+    gJoyNormDX = 0.0f;
+    gJoyNormDY = 0.0f;
+
+    if (gJoy.active)
+    {
+        RefreshScreen();
+        float r  = (float)gScreenH * JOY_RADIUS_FRAC;
+        float dx = gJoy.currentX - gJoy.anchorX;
+        float dy = gJoy.currentY - gJoy.anchorY;
+        float dist = sqrtf(dx*dx + dy*dy);
+
+        if (dist >= r * JOY_DEAD_ZONE)
+        {
+            float normalizer = dist > r ? dist : r;
+            gJoyNormDX = dx / normalizer;
+            gJoyNormDY = dy / normalizer;
+        }
+    }
 }
 
 bool TouchControls_IsPressed(int needID)
 {
-	switch (needID)
-	{
-	case kNeed_Up:
-	case kNeed_UIUp:
-		return gJoystickDY < -0.3f;
+    // --- Directional / joystick needs ---
+    switch (needID)
+    {
+    case kNeed_Up:    case kNeed_UIUp:    return gJoyNormDY < -0.3f;
+    case kNeed_Down:  case kNeed_UIDown:  return gJoyNormDY >  0.3f;
+    case kNeed_Left:  case kNeed_UILeft:  return gJoyNormDX < -0.3f;
+    case kNeed_Right: case kNeed_UIRight: return gJoyNormDX >  0.3f;
+    default: break;
+    }
 
-	case kNeed_Down:
-	case kNeed_UIDown:
-		return gJoystickDY > 0.3f;
+    // --- Map needID to button index ---
+    int btnIdx = -1;
+    switch (needID)
+    {
+    case kNeed_Attack:      case kNeed_UIConfirm: case kNeed_UINext: btnIdx = BTN_ATTACK; break;
+    case kNeed_UIBack:      case kNeed_UIPrev:                       btnIdx = BTN_BACK;   break;
+    case kNeed_PrevWeapon:                                           btnIdx = BTN_PREV;   break;
+    case kNeed_NextWeapon:                                           btnIdx = BTN_NEXT;   break;
+    case kNeed_UIPause:                                              btnIdx = BTN_PAUSE;  break;
+    case kNeed_Radar:                                                btnIdx = BTN_RADAR;  break;
+    case kNeed_ToggleMusic:                                          btnIdx = BTN_MUSIC;  break;
+    default: return false;
+    }
 
-	case kNeed_Left:
-	case kNeed_UILeft:
-		return gJoystickDX < -0.3f;
+    // Check all active non-joystick touches against this button
+    RefreshScreen();
+    float cx = (float)gScreenW * kBtnCX[btnIdx];
+    float cy = (float)gScreenH * kBtnCY[btnIdx];
+    float r  = (float)gScreenH * kBtnRadFrac[btnIdx] * BTN_HIT_SCALE;
 
-	case kNeed_Right:
-	case kNeed_UIRight:
-		return gJoystickDX > 0.3f;
-
-	case kNeed_Attack:
-	case kNeed_UIConfirm:
-	case kNeed_UINext:
-		return gBtnStates[BTN_IDX_ATTACK];
-
-	case kNeed_UIBack:
-	case kNeed_UIPrev:
-		return gBtnStates[BTN_IDX_BACK];
-
-	case kNeed_UIPause:
-		return gBtnStates[BTN_IDX_PAUSE];
-
-	case kNeed_PrevWeapon:
-		return gBtnStates[BTN_IDX_PREV];
-
-	case kNeed_NextWeapon:
-		return gBtnStates[BTN_IDX_NEXT];
-
-	case kNeed_Radar:
-		return gBtnStates[BTN_IDX_RADAR];
-
-	case kNeed_ToggleMusic:
-		return gBtnStates[BTN_IDX_MUSIC];
-
-	default:
-		return false;
-	}
+    for (int i = 0; i < MAX_TOUCHES; i++)
+    {
+        if (!gTouches[i].active) continue;
+        float dx = gTouches[i].x - cx, dy = gTouches[i].y - cy;
+        if (dx*dx + dy*dy < r*r) return true;
+    }
+    return false;
 }
+
+//------------------------------------------------------------
+// Overlay drawing
+//------------------------------------------------------------
 
 extern void GLRender_DrawTouchControlsOverlay(float screenW, float screenH,
                                                float joyCX, float joyCY, float joyR,
@@ -356,44 +328,66 @@ extern void GLRender_DrawTouchControlsOverlay(float screenW, float screenH,
 
 void TouchControls_DrawOverlay(void)
 {
-	UpdateScreenDimensions();
-	float sw = (float)gScreenW;
-	float sh = (float)gScreenH;
+    RefreshScreen();
+    float sw = (float)gScreenW;
+    float sh = (float)gScreenH;
 
-	float joyR  = sh * JOYSTICK_RADIUS_FRAC;
-	float joyCX = sw * JOYSTICK_CX_FRAC;
-	float joyCY = sh * JOYSTICK_CY_FRAC;
+    // ---- Joystick ring centre and thumb position ----
+    // When inactive: draw ring at the static default position (visual hint to the player).
+    // When active:   draw ring at the finger's anchor point (floating joystick).
+    float joyR   = sh * JOY_RADIUS_FRAC;
+    float ringCX = gJoy.active ? gJoy.anchorX  : sw * JOY_DEFAULT_CX;
+    float ringCY = gJoy.active ? gJoy.anchorY  : sh * JOY_DEFAULT_CY;
 
-	// Clamp thumb offset to joystick radius so it never leaves the ring visually
-	float thumbDX = gJoystickDX * joyR;
-	float thumbDY = gJoystickDY * joyR;
-	float thumbDist = sqrtf(thumbDX*thumbDX + thumbDY*thumbDY);
-	if (thumbDist > joyR)
-	{
-		thumbDX = thumbDX / thumbDist * joyR;
-		thumbDY = thumbDY / thumbDist * joyR;
-	}
-	float thumbX = joyCX + thumbDX;
-	float thumbY = joyCY + thumbDY;
+    float thumbX = ringCX;
+    float thumbY = ringCY;
+    if (gJoy.active)
+    {
+        float dx   = gJoy.currentX - gJoy.anchorX;
+        float dy   = gJoy.currentY - gJoy.anchorY;
+        float dist = sqrtf(dx*dx + dy*dy);
+        if (dist > joyR)
+        {
+            dx = dx / dist * joyR;
+            dy = dy / dist * joyR;
+        }
+        thumbX = gJoy.anchorX + dx;
+        thumbY = gJoy.anchorY + dy;
+    }
 
-	float mainR  = sh * BTN_RADIUS_FRAC;
-	float smallR = sh * BTN_SMALL_RADIUS_FRAC;
+    // ---- Button layout and pressed state ----
+    float btn[NUM_BUTTONS][3];
+    bool  btnPressed[NUM_BUTTONS];
 
-	// btn[i] = { cx, cy, radius }
-	float btn[NUM_BUTTONS][3] = {
-		{ sw * BTN_A_CX_FRAC,     sh * BTN_A_CY_FRAC,     mainR  },   // Attack
-		{ sw * BTN_B_CX_FRAC,     sh * BTN_B_CY_FRAC,     mainR  },   // Back
-		{ sw * BTN_PREV_CX_FRAC,  sh * BTN_PREV_CY_FRAC,  mainR  },   // PrevWeapon
-		{ sw * BTN_NEXT_CX_FRAC,  sh * BTN_NEXT_CY_FRAC,  mainR  },   // NextWeapon
-		{ sw * BTN_PAUSE_CX_FRAC, sh * BTN_PAUSE_CY_FRAC, smallR },   // Pause
-		{ sw * BTN_RADAR_CX_FRAC, sh * BTN_RADAR_CY_FRAC, mainR  },   // Radar
-		{ sw * BTN_MUSIC_CX_FRAC, sh * BTN_MUSIC_CY_FRAC, smallR },   // Music
-	};
+    for (int i = 0; i < NUM_BUTTONS; i++)
+    {
+        btn[i][0]    = sw * kBtnCX[i];
+        btn[i][1]    = sh * kBtnCY[i];
+        btn[i][2]    = sh * kBtnRadFrac[i];
+        btnPressed[i] = false;
+    }
 
-	GLRender_DrawTouchControlsOverlay(sw, sh,
-		joyCX, joyCY, joyR,
-		thumbX, thumbY, gJoystickFingerActive,
-		btn, gBtnStates);
+    // Mark buttons as pressed if any touch is inside their hit area
+    for (int t = 0; t < MAX_TOUCHES; t++)
+    {
+        if (!gTouches[t].active) continue;
+        for (int b = 0; b < NUM_BUTTONS; b++)
+        {
+            if (!btnPressed[b])
+            {
+                float dx = gTouches[t].x - btn[b][0];
+                float dy = gTouches[t].y - btn[b][1];
+                float rHit = btn[b][2] * BTN_HIT_SCALE;
+                if (dx*dx + dy*dy < rHit*rHit)
+                    btnPressed[b] = true;
+            }
+        }
+    }
+
+    GLRender_DrawTouchControlsOverlay(sw, sh,
+        ringCX, ringCY, joyR,
+        thumbX, thumbY, gJoy.active,
+        btn, btnPressed);
 }
 
 #endif // __ANDROID__

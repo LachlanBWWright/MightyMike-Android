@@ -784,6 +784,16 @@ void GLRender_PresentFramebuffer(void)
 	//-------------------------------------------------------------------------
 	// Draw the quad
 
+#ifdef __ANDROID__
+	// On Android (tile-based GPU), always clear the full framebuffer each frame.
+	// This is both optimal for TBDR hardware and essential for correctness:
+	// the touch-control overlay is drawn over the full screen but the game quad
+	// only covers the letterbox area.  Without a full clear, circles drawn in the
+	// black-bar regions by the previous frame's overlay persist indefinitely,
+	// causing the "infinitely multiplying joystick nubs" visual artifact.
+	glClearColor(0, 0, 0, 1);
+	glClear(GL_COLOR_BUFFER_BIT);
+#else
 	// On a Mini G4, NOT clearing the screen increases the framerate by 8%
 	// so don't do it unless the viewport rectangle has recently changed.
 	if (needClear > 0)
@@ -796,6 +806,7 @@ void GLRender_PresentFramebuffer(void)
 #endif
 		glClear(GL_COLOR_BUFFER_BIT);
 	}
+#endif // __ANDROID__
 
 	glBindTexture(GL_TEXTURE_2D, gFrameTexture);
 

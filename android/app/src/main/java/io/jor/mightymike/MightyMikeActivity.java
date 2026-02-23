@@ -5,27 +5,29 @@ import android.os.Bundle;
 import org.libsdl.app.SDLActivity;
 
 public class MightyMikeActivity extends SDLActivity {
-    private void forceLandscape() {
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
-    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        forceLandscape();
-    }
-
-    @Override
-    protected void onStart() {
-        super.onStart();
-        forceLandscape();
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        // Re-apply after SDL's SDLActivity.onResume() may have reset the orientation.
-        forceLandscape();
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+    }
+
+    /**
+     * Overrides SDL3's orientation management entirely.
+     * SDL3's SDLActivity.setOrientationBis() calls setRequestedOrientation() based on
+     * the SDL_HINT_ORIENTATIONS value. We intercept this here and always enforce
+     * SENSOR_LANDSCAPE regardless of what SDL calculates, ensuring the app can never
+     * enter portrait mode even if SDL's logic produces an unexpected result.
+     */
+    @Override
+    public void setOrientationBis(int w, int h, boolean resizable, String hint) {
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
     }
 
     @Override
