@@ -790,7 +790,7 @@ void GLRender_PresentFramebuffer(void)
 	// the touch-control overlay is drawn over the full screen but the game quad
 	// only covers the letterbox area.  Without a full clear, circles drawn in the
 	// black-bar regions by the previous frame's overlay persist indefinitely,
-	// causing the "infinitely multiplying joystick nubs" visual artifact.
+	// causing persistent ghost circles from previous joystick touch positions.
 	glClearColor(0, 0, 0, 1);
 	glClear(GL_COLOR_BUFFER_BIT);
 #else

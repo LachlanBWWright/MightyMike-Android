@@ -1,5 +1,5 @@
-// TOUCH CONTROLS FOR ANDROID
-// Complete rewrite - clean isolated state machine.
+// TOUCH INPUT HANDLING
+// Isolated joystick and button state management for Android touch controls.
 // (C) 2025 Mighty Mike Android Port
 
 #ifdef __ANDROID__
@@ -46,7 +46,8 @@ static const float kBtnRadFrac[NUM_BUTTONS] = {
     0.09f,                          // Radar                     - full size
     0.055f                          // Music                     - small
 };
-// Hit radius is slightly larger than visual radius for usability
+// Hit radius is slightly larger than visual radius for better touch usability.
+// 1.35 = 35% larger than the visual radius, balancing accuracy and ease of tapping.
 #define BTN_HIT_SCALE  1.35f
 
 //------------------------------------------------------------
@@ -269,6 +270,9 @@ void TouchControls_UpdateNeeds(void)
 
         if (dist >= r * JOY_DEAD_ZONE)
         {
+            // Clamp displacement to the joystick radius while preserving direction.
+            // If dist <= r: normalizer = r, so output = dx/r (proportional within radius).
+            // If dist > r:  normalizer = dist, so output = dx/dist (unit vector, capped at 1.0).
             float normalizer = dist > r ? dist : r;
             gJoyNormDX = dx / normalizer;
             gJoyNormDY = dy / normalizer;
