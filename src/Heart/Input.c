@@ -153,6 +153,12 @@ void UpdateInput(void)
 		case SDL_EVENT_FINGER_UP:
 			TouchControls_HandleEvent(&event);
 			break;
+
+		case SDL_EVENT_DID_ENTER_BACKGROUND:
+			// When the app is backgrounded, any in-flight touches will not receive
+			// a FINGER_UP event.  Reset all touch state so controls don't get stuck.
+			TouchControls_Init();
+			break;
 #endif
 		}
 	}
