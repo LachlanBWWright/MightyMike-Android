@@ -42,9 +42,6 @@
 #define BTN_SMALL_RADIUS_FRAC   0.055f  // small utility buttons (pause, music)
 
 // Button positions (cx, cy as fractions of screen w/h)
-// Diamond on right side: Attack(right), Back(left), Radar(top)
-// Weapon row below: Prev(left), Next(right)
-// Small row at top-right: Music, Pause
 #define BTN_A_CX_FRAC       0.88f   // Attack
 #define BTN_A_CY_FRAC       0.72f
 #define BTN_B_CX_FRAC       0.73f   // Back
@@ -68,14 +65,13 @@ typedef struct
 {
 	SDL_FingerID    fingerID;
 	bool            active;
+	bool            isJoystick;   // true if this touch started in the joystick zone
 	float           startX, startY;
 	float           currentX, currentY;
 } TouchPoint;
 
 static TouchPoint   gTouchPoints[MAX_TOUCH_POINTS];
 static float        gJoystickDX = 0, gJoystickDY = 0;   // normalized -1..1
-
-static SDL_FingerID gJoystickFinger = 0;
 static bool         gJoystickFingerActive = false;
 
 static bool gBtnStates[NUM_BUTTONS];
@@ -151,21 +147,17 @@ static void UpdateButtonStates(void)
 	}
 }
 
+// Derive joystick state entirely from gTouchPoints[].isJoystick slots.
+// This avoids all fingerID-mismatch issues: once a slot is marked isJoystick,
+// the joystick tracks that slot until it goes inactive, regardless of fingerID.
 static void UpdateJoystick(void)
 {
-	if (!gJoystickFingerActive)
-	{
-		gJoystickDX = 0;
-		gJoystickDY = 0;
-		return;
-	}
-
 	UpdateScreenDimensions();
 	float radius = gScreenH * JOYSTICK_RADIUS_FRAC;
 
 	for (int i = 0; i < MAX_TOUCH_POINTS; i++)
 	{
-		if (!gTouchPoints[i].active || gTouchPoints[i].fingerID != gJoystickFinger)
+		if (!gTouchPoints[i].active || !gTouchPoints[i].isJoystick)
 			continue;
 
 		float dx = gTouchPoints[i].currentX - gTouchPoints[i].startX;
@@ -183,10 +175,11 @@ static void UpdateJoystick(void)
 			gJoystickDX = dx / normalizer;
 			gJoystickDY = dy / normalizer;
 		}
+		gJoystickFingerActive = true;
 		return;
 	}
 
-	// Finger not found — clear state (can happen if FINGER_UP fingerID mismatched)
+	// No active joystick touch found
 	gJoystickFingerActive = false;
 	gJoystickDX = 0;
 	gJoystickDY = 0;
@@ -214,24 +207,23 @@ void TouchControls_HandleEvent(const SDL_Event* event)
 		float px = event->tfinger.x * gScreenW;
 		float py = event->tfinger.y * gScreenH;
 
+		// Check whether a joystick slot is already active
+		bool hasJoystick = false;
+		for (int j = 0; j < MAX_TOUCH_POINTS; j++)
+			if (gTouchPoints[j].active && gTouchPoints[j].isJoystick)
+				{ hasJoystick = true; break; }
+
 		for (int i = 0; i < MAX_TOUCH_POINTS; i++)
 		{
 			if (!gTouchPoints[i].active)
 			{
-				gTouchPoints[i].active   = true;
-				gTouchPoints[i].fingerID = event->tfinger.fingerID;
-				gTouchPoints[i].startX   = px;
-				gTouchPoints[i].startY   = py;
-				gTouchPoints[i].currentX = px;
-				gTouchPoints[i].currentY = py;
-
-				if (IsInJoystickZone(px, py) && !gJoystickFingerActive)
-				{
-					gJoystickFinger       = event->tfinger.fingerID;
-					gJoystickFingerActive = true;
-					gJoystickDX = 0;    // reset stale values from previous touch
-					gJoystickDY = 0;
-				}
+				gTouchPoints[i].active    = true;
+				gTouchPoints[i].fingerID  = event->tfinger.fingerID;
+				gTouchPoints[i].isJoystick = IsInJoystickZone(px, py) && !hasJoystick;
+				gTouchPoints[i].startX    = px;
+				gTouchPoints[i].startY    = py;
+				gTouchPoints[i].currentX  = px;
+				gTouchPoints[i].currentY  = py;
 				break;
 			}
 		}
@@ -262,24 +254,39 @@ void TouchControls_HandleEvent(const SDL_Event* event)
 		float px = event->tfinger.x * gScreenW;
 		float py = event->tfinger.y * gScreenH;
 
+		// Primary: match by fingerID (the normal path)
+		bool found = false;
 		for (int i = 0; i < MAX_TOUCH_POINTS; i++)
 		{
 			if (gTouchPoints[i].active && gTouchPoints[i].fingerID == event->tfinger.fingerID)
 			{
-				gTouchPoints[i].currentX = px;
-				gTouchPoints[i].currentY = py;
-				gTouchPoints[i].active = false;
+				gTouchPoints[i].active     = false;
+				gTouchPoints[i].isJoystick = false;
+				found = true;
 				break;
 			}
 		}
-		// Always clear joystick when the joystick finger lifts, even if touch-point
-		// lookup failed due to a fingerID mismatch (which would otherwise leave the
-		// thumb indicator stuck at the edge).
-		if (gJoystickFingerActive && gJoystickFinger == event->tfinger.fingerID)
+
+		// Fallback: some Android versions report a different fingerID in FINGER_UP
+		// (the "zombie touch" bug).  Clear the nearest active slot so the array
+		// never fills up with phantom touches.
+		if (!found)
 		{
-			gJoystickFingerActive = false;
-			gJoystickDX = 0;
-			gJoystickDY = 0;
+			float minDist = 1e12f;
+			int   bestIdx = -1;
+			for (int i = 0; i < MAX_TOUCH_POINTS; i++)
+			{
+				if (!gTouchPoints[i].active) continue;
+				float dx = gTouchPoints[i].currentX - px;
+				float dy = gTouchPoints[i].currentY - py;
+				float d2 = dx*dx + dy*dy;
+				if (d2 < minDist) { minDist = d2; bestIdx = i; }
+			}
+			if (bestIdx >= 0)
+			{
+				gTouchPoints[bestIdx].active     = false;
+				gTouchPoints[bestIdx].isJoystick = false;
+			}
 		}
 		break;
 	}
@@ -356,7 +363,7 @@ void TouchControls_DrawOverlay(void)
 	float joyCX = sw * JOYSTICK_CX_FRAC;
 	float joyCY = sh * JOYSTICK_CY_FRAC;
 
-	// Clamp thumb to joystick radius
+	// Clamp thumb offset to joystick radius so it never leaves the ring visually
 	float thumbDX = gJoystickDX * joyR;
 	float thumbDY = gJoystickDY * joyR;
 	float thumbDist = sqrtf(thumbDX*thumbDX + thumbDY*thumbDY);

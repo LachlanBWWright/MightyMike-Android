@@ -14,6 +14,8 @@
             android:exported="true"
             android:configChanges="orientation|screenSize|keyboard|keyboardHidden"
             android:screenOrientation="sensorLandscape">
+            <!-- Tell SDL3 to only allow landscape orientations so it never overrides our setting -->
+            <meta-data android:name="SDL_ORIENTATIONS" android:value="LandscapeLeft LandscapeRight" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

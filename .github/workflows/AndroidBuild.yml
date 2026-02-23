@@ -3,7 +3,7 @@ name: Android Build
 on: [push, pull_request, workflow_dispatch]
 
 permissions:
-  contents: read
+  contents: write   # write needed to create/update releases
 
 jobs:
   build-android:
@@ -43,8 +43,22 @@ jobs:
         working-directory: android
         run: ./gradlew assembleDebug
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
         with:
           name: MightyMike-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+      - name: Publish GitHub Release (main branch only)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Delete the existing nightly release + tag so we can recreate it cleanly.
+          gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
+          gh release create nightly \
+            --title "Android Debug Build (Latest)" \
+            --notes "Latest Android debug APK built automatically from the \`main\` branch." \
+            --prerelease \
+            android/app/build/outputs/apk/debug/*.apk

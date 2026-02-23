@@ -360,13 +360,9 @@ void GLRender_DrawTouchControlsOverlay(float screenW, float screenH,
 	// --- Joystick thumb indicator (only when finger is active) ---
 	if (joyActive)
 	{
-		glUniform4f(gUniformColor, 0.7f, 0.7f, 1.0f, 0.70f);
-		GLES_DrawFilledCircle(joyThumbX, joyThumbY, joyR * 0.40f, 20, screenW, screenH);
-		// Outline on thumb (slightly larger, brighter)
-		glUniform4f(gUniformColor, 1.0f, 1.0f, 1.0f, 0.50f);
-		GLES_DrawFilledCircle(joyThumbX, joyThumbY, joyR * 0.40f, 20, screenW, screenH);
-		glUniform4f(gUniformColor, 0.7f, 0.7f, 1.0f, 0.70f);
-		GLES_DrawFilledCircle(joyThumbX, joyThumbY, joyR * 0.33f, 20, screenW, screenH);
+		// Single semi-transparent circle — one circle only, no stacking artifacts.
+		glUniform4f(gUniformColor, 0.7f, 0.7f, 1.0f, 0.80f);
+		GLES_DrawFilledCircle(joyThumbX, joyThumbY, joyR * 0.38f, 20, screenW, screenH);
 	}
 
 	// --- Action buttons --- //

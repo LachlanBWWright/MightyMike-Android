@@ -9,6 +9,11 @@
 #include "PommeFiles.h"
 #include "PommeInit.h"
 
+#ifdef __ANDROID__
+#include <exception>
+#include <stdexcept>
+#endif
+
 extern "C"
 {
 	#include "externs.h"
@@ -389,6 +394,12 @@ static void Boot(int argc, char** argv)
 	// Start our "machine"
 	Pomme::Init();
 
+#ifdef __ANDROID__
+	// Tell SDL to only allow landscape orientations — must be set before SDL_Init
+	// so SDLActivity never resets our manifest/Activity orientation setting.
+	SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+#endif
+
 	// Initialize SDL video subsystem
 	if (!SDL_Init(SDL_INIT_VIDEO))
 	{
@@ -455,6 +466,25 @@ int main(int argc, char** argv)
 {
 	bool success = true;
 	std::string uncaught = "";
+
+#ifdef __ANDROID__
+	// Install a last-resort terminate handler so unhandled C++ terminations show a dialog.
+	std::set_terminate([]()
+	{
+		std::string msg = "Unexpected fatal error (set_terminate)";
+		auto p = std::current_exception();
+		if (p)
+		{
+			try { std::rethrow_exception(p); }
+			catch (std::exception& e) { msg = e.what(); }
+			catch (...) {}
+		}
+		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "set_terminate: %s", msg.c_str());
+		SDL_ShowSimpleMessageBox(0, GAME_FULL_NAME, msg.c_str(), nullptr);
+		SDL_Quit();
+		std::abort();
+	});
+#endif
 
 	try
 	{

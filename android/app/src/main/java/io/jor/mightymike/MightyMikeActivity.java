@@ -5,12 +5,27 @@ import android.os.Bundle;
 import org.libsdl.app.SDLActivity;
 
 public class MightyMikeActivity extends SDLActivity {
+    private void forceLandscape() {
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        // Force landscape regardless of device orientation sensor or user lock setting.
-        // The manifest attribute alone is sometimes ignored by SDL's SDLActivity.
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+        forceLandscape();
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        forceLandscape();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // Re-apply after SDL's SDLActivity.onResume() may have reset the orientation.
+        forceLandscape();
     }
 
     @Override
