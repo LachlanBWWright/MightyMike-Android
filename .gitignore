@@ -9,6 +9,10 @@ cache/
 /cmake-build*/
 /out/
 /dist/
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/app/.cxx/
 
 # IDEs
 .vs/
@@ -18,4 +22,3 @@ cache/
 
 # macOS metadata
 .DS_Store
-

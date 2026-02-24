@@ -24,6 +24,11 @@ option(SDL_STATIC "Static link SDL" OFF)
 
 option(SANITIZE "Build with asan/ubsan" OFF)
 
+if(ANDROID)
+	set(BUILD_SDL_FROM_SOURCE ON CACHE BOOL "Build SDL from source" FORCE)
+	set(SDL_STATIC OFF CACHE BOOL "Static link SDL" FORCE)
+endif()
+
 if(WIN32 OR APPLE)
 	# Don't warn
 elseif(SANITIZE)
@@ -63,7 +68,12 @@ add_compile_definitions(POMME_CASE_SENSITIVE_FSSPEC=1)
 # If SDL3_DIR wasn't specified, discover if the user put some prebuilt SDL3
 # package in the 'extern' directory
 if(NOT DEFINED SDL3_DIR)
-	if(APPLE)
+	if(ANDROID)
+		set(_sdl3_maybe "${CMAKE_SOURCE_DIR}/extern/SDL3-3.2.2")
+		if(NOT EXISTS "${_sdl3_maybe}/CMakeLists.txt")
+			set(_sdl3_maybe "${CMAKE_SOURCE_DIR}/extern/SDL")
+		endif()
+	elseif(APPLE)
 		set(_sdl3_maybe "${CMAKE_SOURCE_DIR}/extern/SDL3.framework/Resources/CMake")
 	elseif(WIN32)
 		set(_sdl3_maybe "${CMAKE_SOURCE_DIR}/extern/SDL3/cmake")
@@ -86,7 +96,9 @@ else()
 		set(SDL3_DIR "${CMAKE_SOURCE_DIR}/extern/SDL")
 	endif()
 	message("Building SDL3 from source: " ${SDL3_DIR})
-	add_subdirectory("${SDL3_DIR}" EXCLUDE_FROM_ALL)
+	set(_sdl3_source_dir "${SDL3_DIR}")
+	add_subdirectory("${_sdl3_source_dir}" "${CMAKE_BINARY_DIR}/SDL3_bin" EXCLUDE_FROM_ALL)
+	set(SDL3_DIR "${CMAKE_BINARY_DIR}/SDL3_bin" CACHE PATH "" FORCE)
 endif()
 
 #------------------------------------------------------------------------------
@@ -95,7 +107,9 @@ endif()
 
 add_subdirectory(extern/Pomme)
 
-find_package(OpenGL REQUIRED)  # only actually required if we want to force GLRENDER
+if(NOT ANDROID)
+	find_package(OpenGL REQUIRED)  # only actually required if we want to force GLRENDER
+endif()
 
 #------------------------------------------------------------------------------
 # EXECUTABLE TARGET
@@ -119,7 +133,12 @@ elseif(APPLE)
 	set_source_files_properties(${CMAKE_SOURCE_DIR}/packaging/${GAME_TARGET}.icns PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
 endif()
 
-add_executable(${GAME_TARGET} ${GAME_SOURCES})
+if(ANDROID)
+	add_library(${GAME_TARGET} SHARED ${GAME_SOURCES})
+	set_target_properties(${GAME_TARGET} PROPERTIES OUTPUT_NAME "main")
+else()
+	add_executable(${GAME_TARGET} ${GAME_SOURCES})
+endif()
 
 target_include_directories(${GAME_TARGET} PRIVATE ${GAME_SRCDIR}/Headers)
 
@@ -129,7 +148,7 @@ target_include_directories(${GAME_TARGET} PRIVATE ${GAME_SRCDIR}/Headers)
 
 add_compile_definitions(
 	"$<$<CONFIG:DEBUG>:_DEBUG>"
-	GLRENDER    # Mighty Mike only (comment out to use SDL's 2D renderer)
+	"$<$<NOT:$<BOOL:${ANDROID}>>:GLRENDER>"    # Mighty Mike only (comment out to use SDL's 2D renderer)
 	#NOVSYNC    # Mighty Mike only
 )
 
@@ -210,7 +229,11 @@ else()
 endif()
 
 # Link core dependencies
-target_link_libraries(${GAME_TARGET} PRIVATE Pomme OpenGL::GL)
+if(ANDROID)
+	target_link_libraries(${GAME_TARGET} PRIVATE Pomme GLESv3 EGL log android)
+else()
+	target_link_libraries(${GAME_TARGET} PRIVATE Pomme OpenGL::GL)
+endif()
 
 # Add required frameworks for KillMacMouseAcceleration
 if(APPLE)

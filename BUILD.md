@@ -74,3 +74,17 @@ If you want to build the game **manually** instead, the rest of this document de
     If you'd like to enable runtime sanitizers, append `-DSANITIZE=1` to the **first** `cmake` call above.
 1. The game gets built in `build/MightyMike`. Enjoy!
 
+## How to build the Android APK
+
+1. Install Android Studio (or Android SDK command-line tools), Android NDK 27.3.13750724, CMake 3.22.1, and JDK 17.
+1. Download SDL3 source to `extern/SDL3-3.2.2`:
+   ```
+   mkdir -p extern
+   curl -L https://libsdl.org/release/SDL3-3.2.2.tar.gz | tar -xz -C extern
+   ```
+1. Build debug APK:
+   ```
+   cd android
+   gradle assembleDebug
+   ```
+1. The APK gets built in `android/app/build/outputs/apk/debug/`.
