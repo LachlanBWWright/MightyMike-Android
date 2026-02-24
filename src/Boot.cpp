@@ -180,8 +180,8 @@ int main(int argc, char** argv)
 		// no-op, the game may throw this exception to shut us down cleanly
 	}
 #if !(_DEBUG) || defined(__ANDROID__)
-	// In release builds, catch anything that might be thrown by GameMain
-	// so we can show an error dialog to the user.
+	// In release builds (and always on Android), catch anything that might be
+	// thrown by GameMain so we can show an error dialog instead of terminating.
 	catch (std::exception& ex)		// Last-resort catch
 	{
 		success = false;
