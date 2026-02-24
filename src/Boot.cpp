@@ -33,6 +33,7 @@ static fs::path FindGameData(const char* executablePath)
 	fs::path dataPath;
 
 #ifdef __ANDROID__
+	(void)executablePath;
 	// On Android: extract assets from APK to internal storage, then point there.
 	// The APK assets have game data files directly at the root (Data/ dir contents)
 	// because build.gradle.kts uses  assets.srcDirs("../../Data").
