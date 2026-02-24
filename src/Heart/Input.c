@@ -147,7 +147,13 @@ void UpdateInput(void)
 
 	int numkeys = 0;
 	const bool* keystate = SDL_GetKeyboardState(&numkeys);
+#ifdef __ANDROID__
+	// On Android, SDL synthesizes mouse button events from touch events.
+	// Suppress mouse buttons to avoid unintended attacks on every tap.
+	uint32_t mouseButtons = 0;
+#else
 	uint32_t mouseButtons = SDL_GetMouseState(NULL, NULL);
+#endif
 
 	{
 		int minNumKeys = numkeys < SDL_SCANCODE_COUNT ? numkeys : SDL_SCANCODE_COUNT;

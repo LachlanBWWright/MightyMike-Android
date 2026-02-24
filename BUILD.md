@@ -12,6 +12,47 @@ python3 build.py
 
 If you want to build the game **manually** instead, the rest of this document describes how to do just that on each of the big 3 desktop operating systems.
 
+## How to build for Android
+
+### Prerequisites
+
+- Android Studio (or Android SDK + NDK + JDK 17 separately)
+- Android NDK 27.2.12479018
+- CMake 3.22.1 (installed via Android SDK Manager)
+- Gradle 8.9+
+
+### Steps
+
+1. Clone the repo **recursively**:
+    ```
+    git clone --recurse-submodules https://github.com/jorio/MightyMike
+    cd MightyMike
+    ```
+
+2. Clone SDL3 from source into `extern/SDL`:
+    ```
+    git clone --depth 1 https://github.com/libsdl-org/SDL.git extern/SDL
+    ```
+
+3. Copy SDL3 Java bridge files:
+    ```
+    mkdir -p android/app/src/main/java/org/libsdl/app
+    cp extern/SDL/android-project/app/src/main/java/org/libsdl/app/*.java \
+       android/app/src/main/java/org/libsdl/app/
+    ```
+
+4. Build the debug APK:
+    ```
+    cd android
+    ./gradlew assembleDebug
+    ```
+
+5. The APK will be at `android/app/build/outputs/apk/debug/app-debug.apk`.
+
+### CI/CD
+
+The repository includes a GitHub Actions workflow (`.github/workflows/android-build.yml`) that automatically builds the Android APK on every push and pull request, uploading the result as a GitHub artifact named `mightymike-debug-apk`.
+
 ## How to build the game manually on macOS
 
 1. Install the prerequisites:
