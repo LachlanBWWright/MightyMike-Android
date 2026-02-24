@@ -1,0 +1,67 @@
+name: Android Build
+
+on: [push, pull_request, workflow_dispatch]
+
+permissions:
+  contents: write   # write needed to create/update releases
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Clone SDL3
+        run: git clone --depth 1 https://github.com/libsdl-org/SDL.git extern/SDL
+
+      - name: Copy SDL Java bridge files
+        run: |
+          mkdir -p android/app/src/main/java/org/libsdl/app
+          cp extern/SDL/android-project/app/src/main/java/org/libsdl/app/*.java \
+             android/app/src/main/java/org/libsdl/app/
+
+      - name: Accept Android SDK licenses
+        run: |
+          yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --licenses || true
+
+      - name: Install Android NDK and CMake
+        run: |
+          ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager \
+            "ndk;27.3.13750724" \
+            "cmake;3.31.5"
+
+      - name: Build APK
+        working-directory: android
+        run: ./gradlew assembleDebug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MightyMike-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Publish GitHub Release (main branch only)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Delete the existing nightly release + tag so we can recreate it cleanly.
+          # Log any failure (e.g. first run when no release exists yet) but don't abort.
+          if ! gh release delete nightly --yes --cleanup-tag 2>&1; then
+            echo "Note: could not delete previous nightly release (may not exist yet)"
+          fi
+          gh release create nightly \
+            --title "Android Debug Build (Latest)" \
+            --notes "Latest Android debug APK built automatically from the \`main\` branch." \
+            --prerelease \
+            android/app/build/outputs/apk/debug/*.apk

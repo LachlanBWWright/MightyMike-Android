@@ -20,6 +20,10 @@
 #include "structures.h"
 #include "externs.h"
 
+#ifdef __ANDROID__
+#include "touchcontrols.h"
+#endif
+
 /**********************/
 /*     PROTOTYPES     */
 /**********************/
@@ -90,6 +94,15 @@ static inline void UpdateKeyState(Byte* state, bool downNow)
 
 void InitInput(void)
 {
+#ifdef __ANDROID__
+	TouchControls_Init();
+
+	// Open the virtual joystick attached by TouchControls_Init as the active gamepad.
+	// This is a no-op if a physical gamepad was already opened by TryOpenGamepad() in
+	// GameMain(); on a typical Android device with no physical controller it gives us
+	// proper SDL_GetGamepadAxis() / SDL_GetGamepadButton() values from touch input.
+	TryOpenGamepad(false);
+#endif
 }
 
 
@@ -139,6 +152,20 @@ void UpdateInput(void)
 			mouseWheelDelta += event.wheel.y;
 			mouseWheelDelta += event.wheel.x;
 			break;
+
+#ifdef __ANDROID__
+		case SDL_EVENT_FINGER_DOWN:
+		case SDL_EVENT_FINGER_MOTION:
+		case SDL_EVENT_FINGER_UP:
+			TouchControls_HandleEvent(&event);
+			break;
+
+		case SDL_EVENT_DID_ENTER_BACKGROUND:
+			// When the app is backgrounded, any in-flight touches will not receive
+			// a FINGER_UP event.  Reset all touch state so controls don't get stuck.
+			TouchControls_Init();
+			break;
+#endif
 		}
 	}
 
@@ -147,7 +174,14 @@ void UpdateInput(void)
 
 	int numkeys = 0;
 	const bool* keystate = SDL_GetKeyboardState(&numkeys);
+
+#ifdef __ANDROID__
+	// On Android, ignore touch-synthesised mouse button events to avoid
+	// unintended in-game actions when the virtual joystick is touched.
+	uint32_t mouseButtons = 0;
+#else
 	uint32_t mouseButtons = SDL_GetMouseState(NULL, NULL);
+#endif
 
 	{
 		int minNumKeys = numkeys < SDL_SCANCODE_COUNT ? numkeys : SDL_SCANCODE_COUNT;
@@ -179,6 +213,10 @@ void UpdateInput(void)
 	// --------------------------------------------
 	// Update needs
 
+#ifdef __ANDROID__
+	TouchControls_UpdateNeeds();
+#endif
+
 	for (int i = 0; i < NUM_CONTROL_NEEDS; i++)
 	{
 		const KeyBinding* kb = &gGamePrefs.keys[i];
@@ -188,6 +226,15 @@ void UpdateInput(void)
 		for (int j = 0; j < KEYBINDING_MAX_KEYS; j++)
 			if (kb->key[j] && kb->key[j] < numkeys)
 				downNow |= KEYSTATE_ACTIVE_BIT & gRawKeyboardState[kb->key[j]];
+
+#ifdef __ANDROID__
+		// Map Android's back button (AC_BACK scancode) to UIBack and UIPause needs
+		if ((i == kNeed_UIBack || i == kNeed_UIPause)
+			&& SDL_SCANCODE_AC_BACK < numkeys)
+		{
+			downNow |= KEYSTATE_ACTIVE_BIT & gRawKeyboardState[SDL_SCANCODE_AC_BACK];
+		}
+#endif
 
 		switch (kb->mouse.type)
 		{
@@ -234,6 +281,10 @@ void UpdateInput(void)
 				}
 			}
 		}
+
+#ifdef __ANDROID__
+		downNow |= TouchControls_IsPressed(i);
+#endif
 
 		UpdateKeyState(&gNeedStates[i], downNow);
 	}

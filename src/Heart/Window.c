@@ -400,7 +400,15 @@ void CleanupDisplay(void)
 #if _DEBUG
 static void SaveIndexedScreenshot(void)
 {
+#ifdef __ANDROID__
+	const char* internalPath = SDL_GetAndroidInternalStoragePath();
+	char screenshotPath[512];
+	SDL_snprintf(screenshotPath, sizeof(screenshotPath), "%s/MikeIndexedScreenshot.tga",
+				 internalPath ? internalPath : "/data/local/tmp");
+	DumpIndexedTGA(screenshotPath, VISIBLE_WIDTH, VISIBLE_HEIGHT, (const char*) gIndexedFramebuffer);
+#else
 	DumpIndexedTGA("/tmp/MikeIndexedScreenshot.tga", VISIBLE_WIDTH, VISIBLE_HEIGHT, (const char*) gIndexedFramebuffer);
+#endif
 }
 
 void DumpIndexedTGA(const char* hostPath, int width, int height, const char* data)
