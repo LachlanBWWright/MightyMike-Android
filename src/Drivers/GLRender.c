@@ -120,10 +120,10 @@ static void DoGLError(GLenum error, const char* func, int line)
 			DoFatalGLError(err, __func__, __LINE__);					\
 	} while(0)
 
-static void DoFatalGLError(GLenum error, const char* file, int line)
+static void DoFatalGLError(GLenum error, const char* func, int line)
 {
 	static char alertbuf[1024];
-	SDL_snprintf(alertbuf, sizeof(alertbuf), "OpenGL error 0x%x\nin %s:%d", error, file, line);
+	SDL_snprintf(alertbuf, sizeof(alertbuf), "OpenGL error 0x%x\nin %s:%d", error, func, line);
 	DoFatalAlert(alertbuf);
 }
 #else
