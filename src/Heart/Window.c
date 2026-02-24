@@ -531,6 +531,11 @@ void SetFullscreenMode(bool enforceDisplayPref)
 		SDL_SetWindowFullscreen(gSDLWindow, SDL_WINDOW_FULLSCREEN);
 	}
 #else
+#ifdef __ANDROID__
+	// Android window is always fullscreen; do not attempt to change display or mode.
+	(void) enforceDisplayPref;
+	SDL_SetWindowFullscreen(gSDLWindow, true);
+#else
 	if (gGamePrefs.displayMode == kDisplayMode_Windowed)
 	{
 		SDL_SetWindowFullscreen(gSDLWindow, false);
@@ -568,6 +573,7 @@ void SetFullscreenMode(bool enforceDisplayPref)
 		SDL_ShowCursor();
 	else
 		SDL_HideCursor();
+#endif // __ANDROID__
 #endif
 }
 
@@ -606,6 +612,10 @@ int GetMaxIntegerZoomForPreferredDisplay(void)
 
 void SetOptimalWindowSize(void)
 {
+#ifdef __ANDROID__
+	// Android window is managed by the system; no manual resizing.
+	return;
+#endif
 	SDL_WindowFlags windowFlags = SDL_GetWindowFlags(gSDLWindow);
 	SDL_RestoreWindow(gSDLWindow);
 

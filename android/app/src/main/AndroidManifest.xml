@@ -10,6 +10,7 @@
         android:label="Mighty Mike"
         android:icon="@mipmap/ic_launcher"
         android:hasCode="true"
+        android:resizeableActivity="false"
         android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
 
         <activity
@@ -17,6 +18,7 @@
             android:exported="true"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode|keyboard|keyboardHidden|navigation|density"
             android:screenOrientation="sensorLandscape"
+            android:immersive="true"
             android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

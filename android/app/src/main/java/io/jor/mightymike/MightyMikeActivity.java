@@ -1,5 +1,8 @@
 package io.jor.mightymike;
 
+import android.os.Bundle;
+import android.view.WindowManager;
+
 import org.libsdl.app.SDLActivity;
 
 /**
@@ -9,6 +12,13 @@ import org.libsdl.app.SDLActivity;
  * getMainFunction() must return "SDL_main" (not "main").
  */
 public class MightyMikeActivity extends SDLActivity {
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        // Keep screen on while the game is running
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+    }
 
     @Override
     protected String[] getLibraries() {

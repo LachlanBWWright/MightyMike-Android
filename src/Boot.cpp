@@ -41,14 +41,36 @@ static fs::path FindGameData(const char* executablePath)
 	if (!internalPath)
 		throw std::runtime_error("Couldn't get internal storage path.");
 
+	SDL_Log("FindGameData: internal storage = %s", internalPath);
+
 	if (!Android_ExtractAssets(internalPath))
 		throw std::runtime_error("Couldn't extract game assets from APK.");
+
+	SDL_Log("FindGameData: assets extracted");
 
 	dataPath = fs::path(internalPath);
 	SDL_free((void*)internalPath);
 	dataPath = dataPath.lexically_normal();
 	gDataSpec = Pomme::Files::HostPathToFSSpec(dataPath / "System");
 
+	// Open the application resource file so CurResFile() returns a valid ref
+	// and resource lookups (e.g. 'dEmo' in demo mode) work correctly.
+	{
+		auto applicationSpec = Pomme::Files::HostPathToFSSpec(dataPath / "System" / "Application");
+		short resFileRefNum = FSpOpenResFile(&applicationSpec, fsRdPerm);
+		if (resFileRefNum != -1)
+		{
+			UseResFile(resFileRefNum);
+			SDL_Log("FindGameData: Application.rsrc opened (ref %d)", resFileRefNum);
+		}
+		else
+		{
+			SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+				"FindGameData: couldn't open Application.rsrc (might be OK)");
+		}
+	}
+
+	SDL_Log("FindGameData: done, dataPath = %s", dataPath.c_str());
 	return dataPath;
 #else
 	int attemptNum = 0;
@@ -118,11 +140,15 @@ static void Boot(int argc, char** argv)
 	// Ensure HOME env var is set so Pomme can find the preferences folder.
 	// On Android, HOME may not be set, causing FindFolder to fail.
 	// Also pre-create $HOME/.config so preference directories can be created.
+	SDL_Log("Boot: setting up Android HOME");
 	if (!getenv("HOME"))
 	{
 		const char* internalPath = SDL_GetAndroidInternalStoragePath();
 		if (internalPath)
+		{
 			setenv("HOME", internalPath, 1);
+			SDL_Log("Boot: HOME set to %s", internalPath);
+		}
 	}
 	{
 		const char* home = getenv("HOME");
@@ -135,13 +161,17 @@ static void Boot(int argc, char** argv)
 				SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
 					"Couldn't create prefs dir '%s': %s",
 					configDir.c_str(), ec.message().c_str());
+			else
+				SDL_Log("Boot: created prefs dir %s", configDir.c_str());
 		}
 	}
 #endif
 
+	SDL_Log("Boot: Pomme::Init");
 	// Start our "machine"
 	Pomme::Init();
 
+	SDL_Log("Boot: SDL_Init VIDEO");
 	// Initialize SDL video subsystem
 	if (!SDL_Init(SDL_INIT_VIDEO))
 	{
@@ -169,12 +199,17 @@ static void Boot(int argc, char** argv)
 	windowFlags |= SDL_WINDOW_OPENGL;
 #endif
 #ifdef __ANDROID__
+	SDL_Log("Boot: creating Android fullscreen window");
 	gSDLWindow = SDL_CreateWindow(GAME_FULL_NAME, 0, 0, windowFlags);
 #else
 	gSDLWindow = SDL_CreateWindow(GAME_FULL_NAME " " GAME_VERSION, VISIBLE_WIDTH, VISIBLE_HEIGHT, windowFlags);
 #endif
 	if (!gSDLWindow)
+	{
+		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Boot: SDL_CreateWindow FAILED: %s", SDL_GetError());
 		throw std::runtime_error("Couldn't create SDL window.");
+	}
+	SDL_Log("Boot: window created");
 
 #if GLRENDER
 	GLRender_Init();

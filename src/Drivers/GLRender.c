@@ -25,6 +25,7 @@
 
 #ifdef __ANDROID__
 #include <GLES3/gl3.h>
+#include <android/log.h>
 // GLES3 uses core buffer functions (no ARB suffix)
 #define glGenBuffersARB         glGenBuffers
 #define glDeleteBuffersARB      glDeleteBuffers
@@ -76,6 +77,60 @@ static GLuint gFramePBO = 0;
 static GLint gMaxTextureSize = 0;
 
 #ifdef __ANDROID__
+// On Android we use a plain CPU buffer instead of a PBO to avoid
+// driver-specific glMapBufferRange issues on GLES 3.0.
+static color_t* gAndroidFrameBuffer = NULL;
+static int      gAndroidFrameBufferSize = 0;
+#endif
+
+// -------------------------------------------------------------------------
+// GL error checking
+// -------------------------------------------------------------------------
+
+#ifdef __ANDROID__
+// On Android, always check GL errors (even in release) since silent crashes
+// are the primary debugging mechanism.  Log to both SDL and Android logcat.
+static void DoGLError(GLenum error, const char* func, int line)
+{
+	const char* errStr = "unknown";
+	switch (error)
+	{
+		case GL_INVALID_ENUM:                  errStr = "GL_INVALID_ENUM"; break;
+		case GL_INVALID_VALUE:                 errStr = "GL_INVALID_VALUE"; break;
+		case GL_INVALID_OPERATION:             errStr = "GL_INVALID_OPERATION"; break;
+		case GL_INVALID_FRAMEBUFFER_OPERATION: errStr = "GL_INVALID_FRAMEBUFFER_OPERATION"; break;
+		case GL_OUT_OF_MEMORY:                 errStr = "GL_OUT_OF_MEMORY"; break;
+	}
+	__android_log_print(ANDROID_LOG_ERROR, "MightyMike",
+		"GL error %s (0x%x) in %s:%d", errStr, error, func, line);
+	SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+		"GL error %s (0x%x) in %s:%d", errStr, error, func, line);
+}
+#define CHECK_GL_ERROR()												\
+	do {																\
+		GLenum err = glGetError();										\
+		if (err != GL_NO_ERROR)											\
+			DoGLError(err, __func__, __LINE__);							\
+	} while(0)
+#elif _DEBUG
+#define CHECK_GL_ERROR()												\
+	do {					 											\
+		GLenum err = glGetError();										\
+		if (err != GL_NO_ERROR)											\
+			DoFatalGLError(err, __func__, __LINE__);					\
+	} while(0)
+
+static void DoFatalGLError(GLenum error, const char* file, int line)
+{
+	static char alertbuf[1024];
+	SDL_snprintf(alertbuf, sizeof(alertbuf), "OpenGL error 0x%x\nin %s:%d", error, file, line);
+	DoFatalAlert(alertbuf);
+}
+#else
+#define CHECK_GL_ERROR() do {} while(0)
+#endif
+
+#ifdef __ANDROID__
 // GLES 3.0 shader-based quad rendering
 static GLuint gQuadProgram = 0;
 static GLuint gQuadVAO = 0;
@@ -123,9 +178,14 @@ static GLuint CompileShader(GLenum type, const char *src)
 
 static void InitQuadShader(void)
 {
+    SDL_Log("InitQuadShader: compiling shaders");
     GLuint vs = CompileShader(GL_VERTEX_SHADER, kQuadVS);
     GLuint fs = CompileShader(GL_FRAGMENT_SHADER, kQuadFS);
-    if (!vs || !fs) return;
+    if (!vs || !fs)
+    {
+        DoFatalAlert("GLES 3.0 shader compilation failed! Check logcat for details.");
+        return;
+    }
 
     gQuadProgram = glCreateProgram();
     glAttachShader(gQuadProgram, vs);
@@ -143,11 +203,14 @@ static void InitQuadShader(void)
         char log[512];
         glGetProgramInfoLog(gQuadProgram, sizeof(log), NULL, log);
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Shader link error: %s", log);
+        __android_log_print(ANDROID_LOG_ERROR, "MightyMike", "Shader link error: %s", log);
         glDeleteProgram(gQuadProgram);
         gQuadProgram = 0;
+        DoFatalAlert("GLES 3.0 shader link failed! Check logcat for details.");
         return;
     }
 
+    SDL_Log("InitQuadShader: program linked (id=%u)", gQuadProgram);
     gQuadTexLoc = glGetUniformLocation(gQuadProgram, "u_texture");
 
     // VAO + VBO for the fullscreen quad (positions + texcoords interleaved)
@@ -171,6 +234,8 @@ static void InitQuadShader(void)
 
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
+    CHECK_GL_ERROR();
+    SDL_Log("InitQuadShader: VAO/VBO set up");
 }
 
 static void DrawQuadGLES(float umax, float vmax)
@@ -187,10 +252,12 @@ static void DrawQuadGLES(float umax, float vmax)
     glBindVertexArray(gQuadVAO);
     glBindBuffer(GL_ARRAY_BUFFER, gQuadVBO);
     glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(verts), verts);
+    CHECK_GL_ERROR();
 
     glUseProgram(gQuadProgram);
     glUniform1i(gQuadTexLoc, 0);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    CHECK_GL_ERROR();
 
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -199,24 +266,6 @@ static void DrawQuadGLES(float umax, float vmax)
 
 const char* gRendererName = "NULL";
 Boolean gCanDoHQStretch = true;
-
-#if _DEBUG
-#define CHECK_GL_ERROR()												\
-	do {					 											\
-		GLenum err = glGetError();										\
-		if (err != GL_NO_ERROR)											\
-			DoFatalGLError(err, __func__, __LINE__);					\
-	} while(0)
-
-static void DoFatalGLError(GLenum error, const char* file, int line)
-{
-	static char alertbuf[1024];
-	SDL_snprintf(alertbuf, sizeof(alertbuf), "OpenGL error 0x%x\nin %s:%d", error, file, line);
-	DoFatalAlert(alertbuf);
-}
-#else
-#define CHECK_GL_ERROR() do {} while(0)
-#endif
 
 SDL_Point FitRectKeepAR(
 		int logicalWidth,
@@ -260,8 +309,10 @@ static void InitTextureAndPBO(int pixelZoom)
 	glGenTextures(1, &gFrameTexture);
 	CHECK_GL_ERROR();
 
+#ifndef __ANDROID__
 	glGenBuffersARB(1, &gFramePBO);
 	CHECK_GL_ERROR();
+#endif
 
 #if 0
 	glBindBufferARB(GL_PIXEL_UNPACK_BUFFER_ARB, gFramePBO);
@@ -295,6 +346,18 @@ static void InitTextureAndPBO(int pixelZoom)
 			NULL // need initial call with NULL so glTexSubImage2D works later on
 	);
 	CHECK_GL_ERROR();
+
+#ifdef __ANDROID__
+	// Android uses a plain CPU buffer (no PBO) for texture upload
+	int bufferSize = kFrameTextureWidth * pixelZoom * kFrameTextureHeight * pixelZoom * kFrameBytesPerPixel;
+	if (bufferSize != gAndroidFrameBufferSize)
+	{
+		SDL_free(gAndroidFrameBuffer);
+		gAndroidFrameBuffer = (color_t*) SDL_malloc(bufferSize);
+		gAndroidFrameBufferSize = bufferSize;
+		SDL_Log("GLRender: allocated %d-byte frame buffer (zoom %d)", bufferSize, pixelZoom);
+	}
+#endif
 }
 
 static void DeleteTextureAndPBO(void)
@@ -305,16 +368,24 @@ static void DeleteTextureAndPBO(void)
 		gFrameTexture = 0;
 	}
 
+#ifndef __ANDROID__
 	if (gFramePBO != 0)
 	{
 		glDeleteBuffersARB(1, &gFramePBO);
 		gFramePBO = 0;
 	}
+#endif
+
+#ifdef __ANDROID__
+	SDL_free(gAndroidFrameBuffer);
+	gAndroidFrameBuffer = NULL;
+	gAndroidFrameBufferSize = 0;
+#endif
 }
 
 void GLRender_Init(void)
 {
-	SDL_Log("Using special PPC renderer!");
+	SDL_Log("GLRender_Init: starting");
 
 #if FRAMEBUFFER_COLOR_DEPTH == 32
 	gRendererName = "fastgl32";
@@ -325,13 +396,25 @@ void GLRender_Init(void)
 #endif
 
 	gGLContext = SDL_GL_CreateContext(gSDLWindow);
-	GAME_ASSERT(gGLContext);
+	if (!gGLContext)
+	{
+		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "GL CreateContext FAILED: %s", SDL_GetError());
+		GAME_ASSERT(gGLContext);
+	}
+	SDL_Log("GLRender_Init: GL context created");
 
 	bool didMakeCurrent = SDL_GL_MakeCurrent(gSDLWindow, gGLContext);
 	GAME_ASSERT_MESSAGE(didMakeCurrent, SDL_GetError());
+	SDL_Log("GLRender_Init: GL context made current");
 
 	glGetIntegerv(GL_MAX_TEXTURE_SIZE, &gMaxTextureSize);
-	SDL_Log("Max texture size: %d", (int) gMaxTextureSize);
+	SDL_Log("GLRender_Init: Max texture size: %d", (int) gMaxTextureSize);
+
+#ifdef __ANDROID__
+	SDL_Log("GLRender_Init: GL_VENDOR   = %s", glGetString(GL_VENDOR));
+	SDL_Log("GLRender_Init: GL_RENDERER = %s", glGetString(GL_RENDERER));
+	SDL_Log("GLRender_Init: GL_VERSION  = %s", glGetString(GL_VERSION));
+#endif
 
 	if (gMaxTextureSize < kFrameTextureWidth)
 	{
@@ -384,9 +467,11 @@ void GLRender_Init(void)
 
 #ifdef __ANDROID__
 	InitQuadShader();
+	SDL_Log("GLRender_Init: quad shader ready");
 #endif
 
 	InitTextureAndPBO(1);
+	SDL_Log("GLRender_Init: texture and buffer ready");
 }
 
 void GLRender_Shutdown(void)
@@ -448,7 +533,18 @@ void GLRender_PresentFramebuffer(void)
 	const int vh = VISIBLE_HEIGHT;
 
 	bool didMakeCurrent = SDL_GL_MakeCurrent(gSDLWindow, gGLContext);
+#ifdef __ANDROID__
+	if (!didMakeCurrent)
+	{
+		// On Android the EGL surface may be momentarily unavailable
+		// (e.g. when the activity is partially obscured). Skip this frame.
+		SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+			"SDL_GL_MakeCurrent failed: %s -- skipping frame", SDL_GetError());
+		return;
+	}
+#else
 	GAME_ASSERT_MESSAGE(didMakeCurrent, SDL_GetError());
+#endif
 
 	//-------------------------------------------------------------------------
 	// Update dimensions
@@ -474,23 +570,34 @@ void GLRender_PresentFramebuffer(void)
 	int zvh = (isHQ ? 2 : 1) * vh;
 
 	//-------------------------------------------------------------------------
-	// Update PBO
+	// Update frame data
 
+#ifdef __ANDROID__
+	// Android: use a plain CPU buffer instead of a PBO.
+	// PBO + glMapBufferRange has driver-specific issues on some GLES 3.0 devices.
+	{
+		int numBytes = zvw * zvh * kFrameBytesPerPixel;
+		if (!gAndroidFrameBuffer || numBytes > gAndroidFrameBufferSize)
+		{
+			// Buffer needs (re)allocation
+			SDL_free(gAndroidFrameBuffer);
+			gAndroidFrameBuffer = (color_t*) SDL_malloc(numBytes);
+			gAndroidFrameBufferSize = numBytes;
+		}
+		GAME_ASSERT(gAndroidFrameBuffer);
+		ConvertFramebufferMT(gAndroidFrameBuffer);
+	}
+#else
+	// Desktop: use PBO for streaming
 	glBindBufferARB(GL_PIXEL_UNPACK_BUFFER_ARB, gFramePBO);
 	CHECK_GL_ERROR();
 
-	// get new PBO
+	// Orphan old PBO and allocate new one
 	int numBytes = zvw * zvh * kFrameBytesPerPixel;
 	glBufferDataARB(GL_PIXEL_UNPACK_BUFFER_ARB, numBytes, NULL, GL_STREAM_DRAW);
 	CHECK_GL_ERROR();
 
-#ifdef __ANDROID__
-	// GLES 3.0 uses glMapBufferRange (glMapBuffer is GLES 3.1+)
-	void* mappedBuffer = glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0, numBytes,
-		GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
-#else
 	void* mappedBuffer = glMapBufferARB(GL_PIXEL_UNPACK_BUFFER_ARB, GL_WRITE_ONLY);
-#endif
 	CHECK_GL_ERROR();
 	GAME_ASSERT(mappedBuffer);
 
@@ -499,6 +606,7 @@ void GLRender_PresentFramebuffer(void)
 
 	glUnmapBufferARB(GL_PIXEL_UNPACK_BUFFER_ARB);
 	CHECK_GL_ERROR();
+#endif
 
 	//-------------------------------------------------------------------------
 	// Draw the quad
@@ -523,7 +631,13 @@ void GLRender_PresentFramebuffer(void)
 
 #if !DEFERRED_TEX_UPDATE
 	// Update the texture
+#ifdef __ANDROID__
+	// With a CPU buffer (no PBO), pass the buffer pointer directly.
+	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, zvw, zvh, kFramePixelFormat, kFramePixelType, gAndroidFrameBuffer);
+#else
+	// With PBO bound, NULL means offset 0 into the PBO.
 	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, zvw, zvh, kFramePixelFormat, kFramePixelType, NULL);
+#endif
 	CHECK_GL_ERROR();
 #endif
 
@@ -550,7 +664,11 @@ void GLRender_PresentFramebuffer(void)
 	//-------------------------------------------------------------------------
 	// Update texture
 
+#ifdef __ANDROID__
+	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, zvw, zvh, kFramePixelFormat, kFramePixelType, gAndroidFrameBuffer);
+#else
 	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, zvw, zvh, kFramePixelFormat, kFramePixelType, NULL);
+#endif
 	CHECK_GL_ERROR();
 #endif
 }
