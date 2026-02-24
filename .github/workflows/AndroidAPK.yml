@@ -1,0 +1,57 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'android/**'
+      - 'src/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/AndroidAPK.yml'
+
+jobs:
+  build-android-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK/NDK components
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "cmake;3.22.1" \
+            "ndk;27.3.13750724"
+
+      - name: Download SDL3 source
+        run: |
+          mkdir -p extern
+          curl -L https://libsdl.org/release/SDL3-3.2.2.tar.gz | tar -xz -C extern
+
+      - name: Build debug APK
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: 8.10.2
+      - run: cd android && gradle assembleDebug --stacktrace
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MightyMike-android-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error

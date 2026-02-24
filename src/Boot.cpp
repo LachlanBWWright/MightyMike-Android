@@ -4,6 +4,7 @@
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
+#include <cstdlib>
 
 #include "Pomme.h"
 #include "PommeFiles.h"
@@ -98,8 +99,25 @@ static void Boot(int argc, char** argv)
 	}
 
 #if GLRENDER
+#if defined(__ANDROID__)
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+#else
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
+#endif
 #endif // GLRENDER
+
+#if defined(__ANDROID__)
+	if (!getenv("HOME"))
+	{
+		const char* internalPath = SDL_GetAndroidInternalStoragePath();
+		if (internalPath)
+		{
+			setenv("HOME", internalPath, 1);
+		}
+	}
+#endif
 
 	// Create window
 	int windowFlags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
@@ -161,9 +179,9 @@ int main(int argc, char** argv)
 	{
 		// no-op, the game may throw this exception to shut us down cleanly
 	}
-#if !(_DEBUG)
-	// In release builds, catch anything that might be thrown by GameMain
-	// so we can show an error dialog to the user.
+#if !(_DEBUG) || defined(__ANDROID__)
+	// In release builds (and always on Android), catch anything that might be
+	// thrown by GameMain so we can show an error dialog instead of terminating.
 	catch (std::exception& ex)		// Last-resort catch
 	{
 		success = false;
