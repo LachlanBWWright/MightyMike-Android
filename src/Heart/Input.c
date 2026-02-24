@@ -168,6 +168,17 @@ void UpdateInput(void)
 		{
 			UpdateKeyState(&gRawKeyboardState[i], false);
 		}
+
+#ifdef __ANDROID__
+		// On Android, remap the hardware back button (AC_BACK) to Escape
+		// so that menu navigation (kNeed_UIBack, kNeed_UIPause) works.
+		if (SDL_SCANCODE_AC_BACK < SDL_SCANCODE_COUNT &&
+		    SDL_SCANCODE_ESCAPE < SDL_SCANCODE_COUNT &&
+		    gRawKeyboardState[SDL_SCANCODE_AC_BACK] & KEYSTATE_ACTIVE_BIT)
+		{
+			UpdateKeyState(&gRawKeyboardState[SDL_SCANCODE_ESCAPE], true);
+		}
+#endif
 	}
 
 	// --------------------------------------------
