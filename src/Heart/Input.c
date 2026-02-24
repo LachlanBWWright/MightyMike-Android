@@ -20,6 +20,10 @@
 #include "structures.h"
 #include "externs.h"
 
+#ifdef __ANDROID__
+#include "TouchControls.h"
+#endif
+
 /**********************/
 /*     PROTOTYPES     */
 /**********************/
@@ -139,6 +143,16 @@ void UpdateInput(void)
 			mouseWheelDelta += event.wheel.y;
 			mouseWheelDelta += event.wheel.x;
 			break;
+
+#ifdef __ANDROID__
+		case SDL_EVENT_FINGER_DOWN:
+		case SDL_EVENT_FINGER_UP:
+		case SDL_EVENT_FINGER_MOTION:
+			TouchControls_ProcessEvent(event.type,
+				event.tfinger.x, event.tfinger.y,
+				event.tfinger.fingerID);
+			break;
+#endif
 		}
 	}
 
@@ -254,6 +268,18 @@ void UpdateInput(void)
 
 		UpdateKeyState(&gNeedStates[i], downNow);
 	}
+
+#ifdef __ANDROID__
+	// OR in touch control bits for each need
+	for (int i = 0; i < NUM_CONTROL_NEEDS; i++)
+	{
+		if (TouchControls_GetNeedActive(i))
+		{
+			UpdateKeyState(&gNeedStates[i], true);
+		}
+	}
+	TouchControls_PostFrame();
+#endif
 }
 
 void ClearInput(void)

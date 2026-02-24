@@ -104,6 +104,32 @@ endif()
 # DEPENDENCIES
 #------------------------------------------------------------------------------
 
+# If SDL3 was added as a subdirectory above, create a shim config file that
+# Pomme's find_package(SDL3 REQUIRED) can use instead of the export()-generated
+# file (which some CMake versions refuse to include() from a subproject).
+if(BUILD_SDL_FROM_SOURCE)
+	if(TARGET SDL3::SDL3-shared)
+		set(_sdl3_shim_dir "${CMAKE_BINARY_DIR}/sdl3-shim")
+		file(MAKE_DIRECTORY "${_sdl3_shim_dir}")
+		file(WRITE "${_sdl3_shim_dir}/SDL3Config.cmake"
+			"# Shim: SDL3 already defined via add_subdirectory.\n"
+			"set(SDL3_FOUND TRUE)\n"
+			"if(NOT TARGET SDL3::SDL3)\n"
+			"  add_library(SDL3::SDL3 INTERFACE IMPORTED)\n"
+			"  target_link_libraries(SDL3::SDL3 INTERFACE SDL3::SDL3-shared)\n"
+			"  target_include_directories(SDL3::SDL3 INTERFACE\n"
+			"    \$<TARGET_PROPERTY:SDL3::SDL3-shared,INTERFACE_INCLUDE_DIRECTORIES>)\n"
+			"endif()\n"
+		)
+		file(WRITE "${_sdl3_shim_dir}/SDL3ConfigVersion.cmake"
+			"set(PACKAGE_VERSION \"3\")\n"
+			"set(PACKAGE_VERSION_COMPATIBLE TRUE)\n"
+			"set(PACKAGE_VERSION_EXACT FALSE)\n"
+		)
+		set(SDL3_DIR "${_sdl3_shim_dir}" CACHE PATH "SDL3 shim dir" FORCE)
+	endif()
+endif()
+
 add_subdirectory(extern/Pomme)
 
 if(NOT ANDROID)
