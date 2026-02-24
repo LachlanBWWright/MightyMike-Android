@@ -12,6 +12,8 @@
 #ifdef __ANDROID__
 #include <exception>
 #include <stdexcept>
+#include <signal.h>
+#include <unistd.h>
 #endif
 
 extern "C"
@@ -484,6 +486,48 @@ int main(int argc, char** argv)
 		SDL_Quit();
 		std::abort();
 	});
+
+	// Install signal handlers for fatal native crashes so a popup is shown.
+	// We use a static buffer to avoid heap allocation inside the signal handler.
+	// After showing the dialog we re-raise the original signal so debuggerd can
+	// still write its tombstone.
+	{
+		static volatile sig_atomic_t gInCrashHandler = 0;
+		auto crashHandler = [](int sig, siginfo_t* /*info*/, void* /*ctx*/)
+		{
+			// Guard against re-entrant calls (e.g., SDL itself faulting)
+			if (gInCrashHandler) return;
+			gInCrashHandler = 1;
+
+			static char msg[128];
+			const char* sigName = "signal";
+			if      (sig == SIGSEGV) sigName = "SIGSEGV (null/bad pointer)";
+			else if (sig == SIGBUS)  sigName = "SIGBUS  (misaligned access)";
+			else if (sig == SIGFPE)  sigName = "SIGFPE  (arithmetic error)";
+			else if (sig == SIGILL)  sigName = "SIGILL  (illegal instruction)";
+			else if (sig == SIGABRT) sigName = "SIGABRT (abort)";
+			SDL_snprintf(msg, sizeof(msg), "Native crash: %s", sigName);
+
+			SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "%s", msg);
+			SDL_ShowSimpleMessageBox(0, GAME_FULL_NAME " crashed", msg, nullptr);
+
+			// Restore default handler and re-raise so debuggerd writes a tombstone.
+			struct sigaction def = {};
+			def.sa_handler = SIG_DFL;
+			sigaction(sig, &def, nullptr);
+			raise(sig);
+		};
+
+		struct sigaction sa = {};
+		sa.sa_sigaction = crashHandler;
+		sa.sa_flags = SA_SIGINFO;
+		sigemptyset(&sa.sa_mask);
+		sigaction(SIGSEGV, &sa, nullptr);
+		sigaction(SIGBUS,  &sa, nullptr);
+		sigaction(SIGFPE,  &sa, nullptr);
+		sigaction(SIGILL,  &sa, nullptr);
+		sigaction(SIGABRT, &sa, nullptr);
+	}
 #endif
 
 	try

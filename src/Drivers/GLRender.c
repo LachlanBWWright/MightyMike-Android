@@ -79,6 +79,12 @@ static GLuint gShaderProgram = 0;
 static GLuint gQuadVAO = 0;
 static GLuint gQuadVBO = 0;
 static GLuint gQuadIBO = 0;
+// Dedicated overlay VAO/VBO — pre-allocated once, updated with glBufferSubData each frame.
+// Keeping this separate from gQuadVBO prevents repeated glBufferData resizing (game quad
+// is 64 bytes; circles need up to 1 024 bytes).  Repeated resize causes GPU-memory
+// fragmentation on some Android drivers, leading to a SIGSEGV after ~100 frames.
+static GLuint gOverlayVAO = 0;
+static GLuint gOverlayVBO = 0;
 static GLint gUniformMVP = -1;
 static GLint gUniformColor = -1;
 static GLuint gWhiteTex = 0;           // 1×1 white texture for solid-color drawing
@@ -161,14 +167,17 @@ static GLuint GLES_CreateShaderProgram(void)
 #include <math.h>
 #include "touchcontrols.h"  // NUM_BUTTONS
 
-// Draw a filled polygon (triangle fan) in screen-pixel coordinates.
-// Caller must have already bound white texture, set color uniform, enabled blend.
-// segments must be <= 62 (array holds segments+2 vertices, max 64).
-static void GLES_DrawFilledCircle(float cx, float cy, float radius, int segments,
-                                  float screenW, float screenH)
-{
+// Maximum vertices for a single overlay primitive (circle with max segments).
+// Overlay VBO is pre-allocated to this size and never resized.
 #define GLES_CIRCLE_MAX_SEGMENTS 62
-#define GLES_CIRCLE_MAX_VERTS    (GLES_CIRCLE_MAX_SEGMENTS + 2)
+#define GLES_CIRCLE_MAX_VERTS    (GLES_CIRCLE_MAX_SEGMENTS + 2)  // center + ring + closing = 64
+
+// Draw a filled polygon (triangle fan) in screen-pixel coordinates.
+// PREREQ: gOverlayVAO and gOverlayVBO must already be bound by the caller.
+//         The overlay MVP uniform must already be set by the caller.
+// segments must be <= GLES_CIRCLE_MAX_SEGMENTS.
+static void GLES_DrawFilledCircle(float cx, float cy, float radius, int segments)
+{
 	if (segments > GLES_CIRCLE_MAX_SEGMENTS) segments = GLES_CIRCLE_MAX_SEGMENTS;
 
 	// Build triangle fan: center + segments ring vertices + closing vertex
@@ -177,7 +186,6 @@ static void GLES_DrawFilledCircle(float cx, float cy, float radius, int segments
 
 	static const float kTwoPI = 6.2831853f;  // 2 * PI
 
-	// Ortho: NDC x = 2*px/screenW - 1, NDC y = 1 - 2*py/screenH
 	verts[0][0] = cx;  verts[0][1] = cy;  verts[0][2] = 0.5f;  verts[0][3] = 0.5f;
 	for (int i = 1; i < nVerts; i++)
 	{
@@ -190,91 +198,48 @@ static void GLES_DrawFilledCircle(float cx, float cy, float radius, int segments
 	verts[nVerts - 1][0] = verts[1][0];  // close the fan
 	verts[nVerts - 1][1] = verts[1][1];
 
-	float mvp[16] = {
-		2.0f/screenW,  0,           0, 0,
-		0,            -2.0f/screenH, 0, 0,
-		0,             0,           -1, 0,
-		-1.0f,         1.0f,         0, 1,
-	};
-	glUniformMatrix4fv(gUniformMVP, 1, GL_FALSE, mvp);
-
-	glBindVertexArray(gQuadVAO);
-	glBindBuffer(GL_ARRAY_BUFFER, gQuadVBO);
-	glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(nVerts * 4 * (GLsizei)sizeof(float)), verts, GL_STREAM_DRAW);
-	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * (GLsizei)sizeof(float), (void*)0);
-	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * (GLsizei)sizeof(float), (void*)(2 * sizeof(float)));
-	glEnableVertexAttribArray(0);
-	glEnableVertexAttribArray(1);
+	// Use glBufferSubData — the VBO was pre-allocated at max size in GLRender_Init.
+	// This avoids any per-frame reallocation (unlike glBufferData/GL_STREAM_DRAW).
+	glBufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr)(nVerts * 4 * (GLsizei)sizeof(float)), verts);
 	glDrawArrays(GL_TRIANGLE_FAN, 0, nVerts);
-	glBindVertexArray(0);
-#undef GLES_CIRCLE_MAX_SEGMENTS
-#undef GLES_CIRCLE_MAX_VERTS
 }
 
 // Draw a filled rotated rectangle centered at (cx, cy) with half-extents (hw, hh),
 // rotated by `angle` radians.
-static void GLES_DrawRect(float cx, float cy, float hw, float hh, float angle,
-                          float screenW, float screenH)
+// PREREQ: gOverlayVAO and gOverlayVBO must already be bound by the caller.
+static void GLES_DrawRect(float cx, float cy, float hw, float hh, float angle)
 {
 	float cosA = cosf(angle), sinA = sinf(angle);
-	// Four corners of the rotated rectangle (CCW order)
+	// Vertices in GL_TRIANGLE_STRIP order (avoids needing an index buffer):
+	//   [TR, TL, BR, BL] → triangles (TR,TL,BR) and (TL,BR,BL)
 	float verts[4][4] = {
-		{ cx + hw*cosA - hh*sinA,  cy + hw*sinA + hh*cosA,  0.5f, 0.5f },
-		{ cx - hw*cosA - hh*sinA,  cy - hw*sinA + hh*cosA,  0.5f, 0.5f },
-		{ cx - hw*cosA + hh*sinA,  cy - hw*sinA - hh*cosA,  0.5f, 0.5f },
-		{ cx + hw*cosA + hh*sinA,  cy + hw*sinA - hh*cosA,  0.5f, 0.5f },
+		{ cx + hw*cosA - hh*sinA,  cy + hw*sinA + hh*cosA,  0.5f, 0.5f },  // TR
+		{ cx - hw*cosA - hh*sinA,  cy - hw*sinA + hh*cosA,  0.5f, 0.5f },  // TL
+		{ cx + hw*cosA + hh*sinA,  cy + hw*sinA - hh*cosA,  0.5f, 0.5f },  // BR
+		{ cx - hw*cosA + hh*sinA,  cy - hw*sinA - hh*cosA,  0.5f, 0.5f },  // BL
 	};
-	float mvp[16] = {
-		2.0f/screenW,  0,            0, 0,
-		0,            -2.0f/screenH, 0, 0,
-		0,             0,           -1, 0,
-		-1.0f,          1.0f,         0, 1,
-	};
-	glUniformMatrix4fv(gUniformMVP, 1, GL_FALSE, mvp);
-	glBindVertexArray(gQuadVAO);
-	glBindBuffer(GL_ARRAY_BUFFER, gQuadVBO);
-	glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)sizeof(verts), verts, GL_STREAM_DRAW);
-	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4*(GLsizei)sizeof(float), (void*)0);
-	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4*(GLsizei)sizeof(float), (void*)(2*sizeof(float)));
-	glEnableVertexAttribArray(0);
-	glEnableVertexAttribArray(1);
-	// gQuadIBO is bound inside gQuadVAO: indices [0,1,2,0,2,3]
-	glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, 0);
-	glBindVertexArray(0);
+	glBufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr)sizeof(verts), verts);
+	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }
 
 // Draw a filled triangle with three screen-space vertices.
-static void GLES_DrawTriangle(float x0, float y0, float x1, float y1, float x2, float y2,
-                              float screenW, float screenH)
+// PREREQ: gOverlayVAO and gOverlayVBO must already be bound by the caller.
+static void GLES_DrawTriangle(float x0, float y0, float x1, float y1, float x2, float y2)
 {
 	float verts[3][4] = {
 		{ x0, y0, 0.5f, 0.5f },
 		{ x1, y1, 0.5f, 0.5f },
 		{ x2, y2, 0.5f, 0.5f },
 	};
-	float mvp[16] = {
-		2.0f/screenW,  0,            0, 0,
-		0,            -2.0f/screenH, 0, 0,
-		0,             0,           -1, 0,
-		-1.0f,          1.0f,         0, 1,
-	};
-	glUniformMatrix4fv(gUniformMVP, 1, GL_FALSE, mvp);
-	glBindVertexArray(gQuadVAO);
-	glBindBuffer(GL_ARRAY_BUFFER, gQuadVBO);
-	glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)sizeof(verts), verts, GL_STREAM_DRAW);
-	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4*(GLsizei)sizeof(float), (void*)0);
-	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4*(GLsizei)sizeof(float), (void*)(2*sizeof(float)));
-	glEnableVertexAttribArray(0);
-	glEnableVertexAttribArray(1);
+	glBufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr)sizeof(verts), verts);
 	glDrawArrays(GL_TRIANGLES, 0, 3);
-	glBindVertexArray(0);
 }
 
 // Draw a geometric icon inside a button circle.
 // btnIdx: 0=Attack, 1=Back, 2=Prev, 3=Next, 4=Pause, 5=Radar, 6=Music
 // (cx,cy) = button center, r = button radius
-static void GLES_DrawButtonIcon(int btnIdx, float cx, float cy, float r,
-                                float screenW, float screenH)
+// PREREQ: gOverlayVAO and gOverlayVBO must already be bound by the caller.
+static void GLES_DrawButtonIcon(int btnIdx, float cx, float cy, float r)
 {
 	static const float kPiOver4 = 0.7853982f;  // 45 degrees in radians
 	glUniform4f(gUniformColor, 1.0f, 1.0f, 1.0f, 0.85f);
@@ -282,49 +247,44 @@ static void GLES_DrawButtonIcon(int btnIdx, float cx, float cy, float r,
 	switch (btnIdx)
 	{
 	case 0: // Attack: plus/cross (sword attack)
-		GLES_DrawRect(cx, cy, r*0.17f, r*0.58f, 0.0f,      screenW, screenH);
-		GLES_DrawRect(cx, cy, r*0.58f, r*0.17f, 0.0f,      screenW, screenH);
+		GLES_DrawRect(cx, cy, r*0.17f, r*0.58f, 0.0f);
+		GLES_DrawRect(cx, cy, r*0.58f, r*0.17f, 0.0f);
 		break;
 
 	case 1: // Back: X shape (cancel)
-		GLES_DrawRect(cx, cy, r*0.14f, r*0.55f,  kPiOver4, screenW, screenH);
-		GLES_DrawRect(cx, cy, r*0.14f, r*0.55f, -kPiOver4, screenW, screenH);
+		GLES_DrawRect(cx, cy, r*0.14f, r*0.55f,  kPiOver4);
+		GLES_DrawRect(cx, cy, r*0.14f, r*0.55f, -kPiOver4);
 		break;
 
 	case 2: // PrevWeapon: left-pointing triangle (◄)
 		GLES_DrawTriangle(cx - r*0.40f, cy,
 		                  cx + r*0.28f, cy - r*0.38f,
-		                  cx + r*0.28f, cy + r*0.38f,
-		                  screenW, screenH);
+		                  cx + r*0.28f, cy + r*0.38f);
 		break;
 
 	case 3: // NextWeapon: right-pointing triangle (►)
 		GLES_DrawTriangle(cx + r*0.40f, cy,
 		                  cx - r*0.28f, cy - r*0.38f,
-		                  cx - r*0.28f, cy + r*0.38f,
-		                  screenW, screenH);
+		                  cx - r*0.28f, cy + r*0.38f);
 		break;
 
 	case 4: // Pause: two vertical bars (‖)
-		GLES_DrawRect(cx - r*0.18f, cy, r*0.10f, r*0.38f, 0.0f, screenW, screenH);
-		GLES_DrawRect(cx + r*0.18f, cy, r*0.10f, r*0.38f, 0.0f, screenW, screenH);
+		GLES_DrawRect(cx - r*0.18f, cy, r*0.10f, r*0.38f, 0.0f);
+		GLES_DrawRect(cx + r*0.18f, cy, r*0.10f, r*0.38f, 0.0f);
 		break;
 
 	case 5: // Radar: outer ring + center dot (radar ping)
-		// Outer white circle
-		GLES_DrawFilledCircle(cx, cy, r*0.58f, 16, screenW, screenH);
-		// Dark overlay to create the ring gap
+		GLES_DrawFilledCircle(cx, cy, r*0.58f, 16);
 		glUniform4f(gUniformColor, 0.0f, 0.0f, 0.2f, 0.72f);
-		GLES_DrawFilledCircle(cx, cy, r*0.38f, 16, screenW, screenH);
-		// White center dot
+		GLES_DrawFilledCircle(cx, cy, r*0.38f, 16);
 		glUniform4f(gUniformColor, 1.0f, 1.0f, 1.0f, 0.85f);
-		GLES_DrawFilledCircle(cx, cy, r*0.14f, 10, screenW, screenH);
+		GLES_DrawFilledCircle(cx, cy, r*0.14f, 10);
 		break;
 
 	case 6: // Music: three horizontal bars (simplified ♪)
-		GLES_DrawRect(cx, cy - r*0.22f, r*0.36f, r*0.07f, 0.0f, screenW, screenH);
-		GLES_DrawRect(cx, cy,           r*0.36f, r*0.07f, 0.0f, screenW, screenH);
-		GLES_DrawRect(cx, cy + r*0.22f, r*0.36f, r*0.07f, 0.0f, screenW, screenH);
+		GLES_DrawRect(cx, cy - r*0.22f, r*0.36f, r*0.07f, 0.0f);
+		GLES_DrawRect(cx, cy,           r*0.36f, r*0.07f, 0.0f);
+		GLES_DrawRect(cx, cy + r*0.22f, r*0.36f, r*0.07f, 0.0f);
 		break;
 
 	default:
@@ -349,34 +309,45 @@ void GLRender_DrawTouchControlsOverlay(float screenW, float screenH,
 	glBindTexture(GL_TEXTURE_2D, gWhiteTex);
 	glUseProgram(gShaderProgram);
 
+	// Set overlay MVP once — maps screen pixels [0,screenW]×[0,screenH] to NDC.
+	// All overlay sub-functions reuse this MVP; it is NOT reset per-draw.
+	float overlayMVP[16] = {
+		2.0f/screenW,  0,            0, 0,
+		0,            -2.0f/screenH, 0, 0,
+		0,             0,           -1, 0,
+		-1.0f,          1.0f,         0, 1,
+	};
+	glUniformMatrix4fv(gUniformMVP, 1, GL_FALSE, overlayMVP);
+
+	// Bind the pre-allocated overlay VAO/VBO once for the entire overlay pass.
+	// All sub-functions update vertex data via glBufferSubData (no reallocation).
+	glBindVertexArray(gOverlayVAO);
+	glBindBuffer(GL_ARRAY_BUFFER, gOverlayVBO);
+
 	// --- Joystick base ring ---
-	// Outer white ring
 	glUniform4f(gUniformColor, 0.8f, 0.8f, 0.8f, 0.40f);
-	GLES_DrawFilledCircle(joyCX, joyCY, joyR, 24, screenW, screenH);
-	// Dark fill to make a ring shape
+	GLES_DrawFilledCircle(joyCX, joyCY, joyR, 24);
 	glUniform4f(gUniformColor, 0.1f, 0.1f, 0.1f, 0.25f);
-	GLES_DrawFilledCircle(joyCX, joyCY, joyR * 0.90f, 24, screenW, screenH);
+	GLES_DrawFilledCircle(joyCX, joyCY, joyR * 0.90f, 24);
 
 	// --- Joystick thumb indicator (only when finger is active) ---
 	if (joyActive)
 	{
-		// Single semi-transparent circle — one circle only, no stacking artifacts.
 		glUniform4f(gUniformColor, 0.7f, 0.7f, 1.0f, 0.80f);
-		GLES_DrawFilledCircle(joyThumbX, joyThumbY, joyR * 0.38f, 20, screenW, screenH);
+		GLES_DrawFilledCircle(joyThumbX, joyThumbY, joyR * 0.38f, 20);
 	}
 
-	// --- Action buttons --- //
-	// btn[i] = { cx, cy, r }
+	// --- Action buttons ---
 	// 0=Attack(orange), 1=Back(blue), 2=Prev(green), 3=Next(green),
 	// 4=Pause(grey), 5=Radar(yellow), 6=Music(grey)
 	static const float kBtnColors[NUM_BUTTONS][4] = {
-		{ 0.90f, 0.45f, 0.15f, 0.45f },   // 0 Attack:  orange
-		{ 0.25f, 0.55f, 0.90f, 0.40f },   // 1 Back:    blue
-		{ 0.35f, 0.85f, 0.45f, 0.40f },   // 2 Prev:    green
-		{ 0.35f, 0.85f, 0.45f, 0.40f },   // 3 Next:    green
-		{ 0.80f, 0.80f, 0.80f, 0.35f },   // 4 Pause:   grey
-		{ 0.90f, 0.80f, 0.20f, 0.40f },   // 5 Radar:   yellow
-		{ 0.65f, 0.65f, 0.65f, 0.32f },   // 6 Music:   grey
+		{ 0.90f, 0.45f, 0.15f, 0.45f },
+		{ 0.25f, 0.55f, 0.90f, 0.40f },
+		{ 0.35f, 0.85f, 0.45f, 0.40f },
+		{ 0.35f, 0.85f, 0.45f, 0.40f },
+		{ 0.80f, 0.80f, 0.80f, 0.35f },
+		{ 0.90f, 0.80f, 0.20f, 0.40f },
+		{ 0.65f, 0.65f, 0.65f, 0.32f },
 	};
 
 	for (int i = 0; i < NUM_BUTTONS; i++)
@@ -385,22 +356,16 @@ void GLRender_DrawTouchControlsOverlay(float screenW, float screenH,
 		float bx    = btn[i][0];
 		float by    = btn[i][1];
 		float alpha = btnPressed[i] ? 0.85f : kBtnColors[i][3];
-		float cr    = kBtnColors[i][0];
-		float cg    = kBtnColors[i][1];
-		float cb    = kBtnColors[i][2];
 
-		// Outer ring (white outline)
 		glUniform4f(gUniformColor, 1.0f, 1.0f, 1.0f, 0.50f);
-		GLES_DrawFilledCircle(bx, by, r, 20, screenW, screenH);
-		// Fill
-		glUniform4f(gUniformColor, cr, cg, cb, alpha);
-		GLES_DrawFilledCircle(bx, by, r * 0.88f, 20, screenW, screenH);
-
-		// Icon
-		GLES_DrawButtonIcon(i, bx, by, r, screenW, screenH);
+		GLES_DrawFilledCircle(bx, by, r, 20);
+		glUniform4f(gUniformColor, kBtnColors[i][0], kBtnColors[i][1], kBtnColors[i][2], alpha);
+		GLES_DrawFilledCircle(bx, by, r * 0.88f, 20);
+		GLES_DrawButtonIcon(i, bx, by, r);
 	}
 
-	// Restore state
+	// Restore GL state
+	glBindVertexArray(0);
 	glUniform4f(gUniformColor, 1.0f, 1.0f, 1.0f, 1.0f);
 	glDisable(GL_BLEND);
 	glBindTexture(GL_TEXTURE_2D, gFrameTexture);
@@ -549,6 +514,8 @@ static void DeleteTextureAndPBO(void)
 
 #ifdef __ANDROID__
 	if (gWhiteTex != 0)      { glDeleteTextures(1, &gWhiteTex); gWhiteTex = 0; }
+	if (gOverlayVBO != 0) { glDeleteBuffers(1, &gOverlayVBO); gOverlayVBO = 0; }
+	if (gOverlayVAO != 0) { glDeleteVertexArrays(1, &gOverlayVAO); gOverlayVAO = 0; }
 	if (gQuadVBO != 0) { glDeleteBuffers(1, &gQuadVBO); gQuadVBO = 0; }
 	if (gQuadIBO != 0) { glDeleteBuffers(1, &gQuadIBO); gQuadIBO = 0; }
 	if (gQuadVAO != 0) { glDeleteVertexArrays(1, &gQuadVAO); gQuadVAO = 0; }
@@ -639,6 +606,26 @@ void GLRender_Init(void)
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, kWhitePixel);
 		glBindTexture(GL_TEXTURE_2D, 0);
+	}
+
+	// Create dedicated overlay VAO/VBO for touch control overlay rendering.
+	// Pre-allocated at the maximum primitive size so glBufferSubData (not glBufferData)
+	// can be used every frame, eliminating per-frame GPU memory reallocation.
+	{
+		glGenVertexArrays(1, &gOverlayVAO);
+		glGenBuffers(1, &gOverlayVBO);
+		glBindVertexArray(gOverlayVAO);
+		glBindBuffer(GL_ARRAY_BUFFER, gOverlayVBO);
+		// Allocate once at max size (largest primitive = circle with GLES_CIRCLE_MAX_VERTS verts)
+		glBufferData(GL_ARRAY_BUFFER,
+		             (GLsizeiptr)(GLES_CIRCLE_MAX_VERTS * 4 * (GLsizei)sizeof(float)),
+		             NULL, GL_DYNAMIC_DRAW);
+		// Set up vertex attributes once; they stay valid for all overlay draw calls.
+		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * (GLsizei)sizeof(float), (void*)0);
+		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * (GLsizei)sizeof(float), (void*)(2 * sizeof(float)));
+		glEnableVertexAttribArray(0);
+		glEnableVertexAttribArray(1);
+		glBindVertexArray(0);
 	}
 
 	glDisable(GL_DEPTH_TEST);
