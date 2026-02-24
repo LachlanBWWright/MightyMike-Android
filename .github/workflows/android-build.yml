@@ -47,10 +47,6 @@ jobs:
           sdkmanager "cmake;3.22.1"
           sdkmanager "ndk;27.2.12479018"
 
-      - name: Generate Gradle wrapper
-        working-directory: android
-        run: gradle wrapper --gradle-version=8.9
-
       - name: Build Debug APK
         working-directory: android
         run: ./gradlew assembleDebug --stacktrace

@@ -24,6 +24,7 @@
 
 // Version file: if this file exists and contains our version, skip extraction.
 // Bump this string whenever the Data/ directory contents change.
+// NOTE: Keep this in sync with GAME_VERSION in CMakeLists.txt (currently "3.0.3").
 #define EXTRACT_VERSION_FILE  ".extract_version"
 #define EXTRACT_VERSION       "3.0.3"
 

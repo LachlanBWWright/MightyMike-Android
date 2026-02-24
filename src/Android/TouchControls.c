@@ -194,7 +194,7 @@ void TouchControls_ProcessEvent(int eventType, float fingerX, float fingerY, lon
 int TouchControls_GetNeedActive(int need)
 {
     if (need < 0 || need >= NUM_NEEDS_MAX) return 0;
-    return gTouchNeedActive[need] ? 0x1 : 0;  // 0x1 = KEYSTATE_ACTIVE_BIT
+    return gTouchNeedActive[need] ? 1 : 0;
 }
 
 void TouchControls_PostFrame(void)
