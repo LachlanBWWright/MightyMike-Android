@@ -265,7 +265,7 @@ static void DrawQuadGLES(float umax, float vmax)
 
 // -------------------------------------------------------------------------
 // Touch controls overlay renderer (GLES 3.0)
-// Draws semi-transparent button zones on top of the game framebuffer.
+// Draws translucent-white button controls on top of the game framebuffer.
 // -------------------------------------------------------------------------
 
 #include "../Android/TouchControls.h"
@@ -275,6 +275,14 @@ static GLuint gOverlayProgram = 0;
 static GLuint gOverlayVAO = 0;
 static GLuint gOverlayVBO = 0;
 static GLint  gOverlayColorLoc = -1;
+
+// Cached window aspect ratio (width / height), updated each DrawTouchOverlay call.
+// Used to draw visually circular button shapes.
+static float gOverlayAR = 1.778f;
+
+// Maximum floats in a single draw-call vertex upload.
+// 20-segment circle: 20 triangles × 3 vertices × 2 floats = 120 floats.
+#define OVERLAY_VBO_FLOATS 256
 
 static const char *kOverlayVS =
     "#version 300 es\n"
@@ -315,9 +323,9 @@ static void InitOverlayShader(void)
     glGetProgramiv(gOverlayProgram, GL_LINK_STATUS, &ok);
     if (!ok)
     {
-        char log[256];
-        glGetProgramInfoLog(gOverlayProgram, sizeof(log), NULL, log);
-        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Overlay shader link error: %s", log);
+        char logbuf[256];
+        glGetProgramInfoLog(gOverlayProgram, sizeof(logbuf), NULL, logbuf);
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Overlay shader link: %s", logbuf);
         glDeleteProgram(gOverlayProgram);
         gOverlayProgram = 0;
         return;
@@ -329,7 +337,7 @@ static void InitOverlayShader(void)
     glGenBuffers(1, &gOverlayVBO);
     glBindVertexArray(gOverlayVAO);
     glBindBuffer(GL_ARRAY_BUFFER, gOverlayVBO);
-    float placeholder[8] = {0};
+    float placeholder[OVERLAY_VBO_FLOATS] = {0};
     glBufferData(GL_ARRAY_BUFFER, sizeof(placeholder), placeholder, GL_DYNAMIC_DRAW);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
@@ -337,82 +345,217 @@ static void InitOverlayShader(void)
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
-// Draw a filled rectangle.
-// nx0,ny0 = normalised top-left (0=left/top, 1=right/bottom).
-// nx1,ny1 = normalised bottom-right.
-static void DrawOverlayRect(float nx0, float ny0, float nx1, float ny1,
-                             float r, float g, float b, float a)
+// -------------------------------------------------------------------------
+// Low-level draw helpers (all coordinates in normalised screen space [0..1],
+// Y=0 at top).  Uploads directly into gOverlayVBO and issues a draw call.
+// -------------------------------------------------------------------------
+
+// normalised → NDC
+static float ovNX(float n) { return 2.0f * n - 1.0f; }
+static float ovNY(float n) { return 1.0f - 2.0f * n; }
+
+// Upload verts[] and draw.
+static void OvDraw(GLenum mode, const float *verts, int vertCount, float r, float g, float b, float a)
 {
-    if (!gOverlayProgram) return;
-    // Convert to NDC: x = 2*nx-1, y = 1-2*ny (GL Y-up)
-    float x0 = 2.0f*nx0 - 1.0f, y0 = 1.0f - 2.0f*ny1;  // bottom-left NDC
-    float x1 = 2.0f*nx1 - 1.0f, y1 = 1.0f - 2.0f*ny0;  // top-right NDC
-    float verts[8] = {
-        x0, y0,   // bottom-left
-        x1, y0,   // bottom-right
-        x0, y1,   // top-left
-        x1, y1,   // top-right
-    };
     glBindBuffer(GL_ARRAY_BUFFER, gOverlayVBO);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(verts), verts);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, vertCount * 2 * sizeof(float), verts);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glUniform4f(gOverlayColorLoc, r, g, b, a);
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glDrawArrays(mode, 0, vertCount);
 }
 
-// Draws all virtual button zones.
-// Call after the game framebuffer quad and before SDL_GL_SwapWindow.
+// Draw a filled axis-aligned rectangle.
+static void OvRect(float nx0, float ny0, float nx1, float ny1, float r, float g, float b, float a)
+{
+    float x0 = ovNX(nx0), y0 = ovNY(ny1);
+    float x1 = ovNX(nx1), y1 = ovNY(ny0);
+    float v[8] = { x0,y0, x1,y0, x0,y1, x1,y1 };
+    OvDraw(GL_TRIANGLE_STRIP, v, 4, r, g, b, a);
+}
+
+// Draw a filled circle.
+// ncx, ncy  – normalised centre.
+// nr        – normalised radius in the Y axis (use AR to keep it visually round).
+#define OV_CIRCLE_SEGS 24
+static void OvCircle(float ncx, float ncy, float nr, float r, float g, float b, float a)
+{
+    float cx = ovNX(ncx);
+    float cy = ovNY(ncy);
+    float ry = nr * 2.0f;               // NDC Y radius
+    float rx = ry / gOverlayAR;         // NDC X radius (AR-corrected for round appearance)
+
+    float v[OV_CIRCLE_SEGS * 3 * 2];
+    const float kStep = 2.0f * 3.14159265f / OV_CIRCLE_SEGS;
+    for (int i = 0; i < OV_CIRCLE_SEGS; i++)
+    {
+        float a0 = kStep * i;
+        float a1 = kStep * (i + 1);
+        int o = i * 6;
+        v[o+0] = cx;                     v[o+1] = cy;
+        v[o+2] = cx + rx * SDL_cosf(a0); v[o+3] = cy + ry * SDL_sinf(a0);
+        v[o+4] = cx + rx * SDL_cosf(a1); v[o+5] = cy + ry * SDL_sinf(a1);
+    }
+    OvDraw(GL_TRIANGLES, v, OV_CIRCLE_SEGS * 3, r, g, b, a);
+}
+
+// Draw a filled triangle (normalised coords).
+static void OvTriangle(float nx0, float ny0, float nx1, float ny1,
+                        float nx2, float ny2, float r, float g, float b, float a)
+{
+    float v[6] = { ovNX(nx0),ovNY(ny0), ovNX(nx1),ovNY(ny1), ovNX(nx2),ovNY(ny2) };
+    OvDraw(GL_TRIANGLES, v, 3, r, g, b, a);
+}
+
+// -------------------------------------------------------------------------
+// Icon helpers (drawn on top of button backgrounds)
+// -------------------------------------------------------------------------
+
+// Arrow pointing UP, centred at (cx, cy), half-size s (normalised)
+static void OvIconArrow(float cx, float cy, float sw, float sh,
+                         float angle_deg,  // 0=up, 90=right, 180=down, 270=left
+                         float r, float g, float b, float a)
+{
+    // Build arrow pointing up, then rotate
+    float rad = angle_deg * 3.14159265f / 180.0f;
+    float cosA = SDL_cosf(rad), sinA = SDL_sinf(rad);
+
+    // Triangle vertices in object space (unrotated, pointing up)
+    float pts[3][2] = {
+        {  0,    -sh },   // tip
+        { -sw,   +sh },   // bottom-left
+        { +sw,   +sh },   // bottom-right
+    };
+
+    // Rotate and translate
+    float x[3], y[3];
+    for (int i = 0; i < 3; i++)
+    {
+        float lx = pts[i][0], ly = pts[i][1];
+        x[i] = cx + lx * cosA - ly * sinA;
+        y[i] = cy + lx * sinA + ly * cosA;
+    }
+    OvTriangle(x[0], y[0], x[1], y[1], x[2], y[2], r, g, b, a);
+}
+
+// Two vertical bars – classic pause icon
+static void OvIconPause(float cx, float cy, float bw, float bh, float gap,
+                          float r, float g, float b, float a)
+{
+    OvRect(cx - gap - bw, cy - bh, cx - gap, cy + bh, r, g, b, a);
+    OvRect(cx + gap,      cy - bh, cx + gap + bw, cy + bh, r, g, b, a);
+}
+
+// ">>" chevron icon for NextWeapon
+static void OvIconChevron(float cx, float cy, float sw, float sh, float dir,
+                            float r, float g, float b, float a)
+{
+    // dir: +1 = pointing right, -1 = pointing left
+    float angle = (dir > 0) ? 90.0f : 270.0f;
+    OvIconArrow(cx, cy, sw, sh, angle, r, g, b, a);
+}
+
+// -------------------------------------------------------------------------
+// Main overlay draw
+// -------------------------------------------------------------------------
+
+#define OV_IDLE_A    0.20f
+#define OV_ACTIVE_A  0.55f
+#define OV_ICON_A    0.80f
+#define OV_ACT(need) (TouchControls_GetNeedActive(need) ? OV_ACTIVE_A : OV_IDLE_A)
+#define OV_W         1.0f  // white
+#define OV_BG_R      1.0f
+#define OV_BG_G      1.0f
+#define OV_BG_B      1.0f
+
 static void DrawTouchOverlay(void)
 {
     if (!gOverlayProgram || !gOverlayVAO) return;
 
+    // Update aspect ratio from actual window dimensions
+    int winW = 1, winH = 1;
+    SDL_GetWindowSize(gSDLWindow, &winW, &winH);
+    if (winH > 0) gOverlayAR = (float)winW / (float)winH;
+
     glUseProgram(gOverlayProgram);
     glBindVertexArray(gOverlayVAO);
-
-    // Enable alpha blending for the overlay
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    // Alpha values: idle = 0.18, active (touched) = 0.45
-    #define IDLE_A   0.18f
-    #define ACTIVE_A 0.45f
-    #define BTN_ALPHA(need) (TouchControls_GetNeedActive(need) ? ACTIVE_A : IDLE_A)
+    // ----------------------------------------------------------------
+    // D-pad – circular base + 4 directional arms + arrow icons
+    // ----------------------------------------------------------------
+    const float DCX = TC_DPAD_CX;
+    const float DCY = TC_DPAD_CY;
+    const float DHW = TC_DPAD_ARM_HW;
+    const float DL  = TC_DPAD_ARM_L;
+
+    // Outer ring (joystick base)
+    float baseR = DL + DHW + 0.01f;
+    OvCircle(DCX, DCY, baseR, OV_W, OV_W, OV_W, 0.10f);
+
+    // Up arm
+    OvRect(DCX - DHW, DCY - DL, DCX + DHW, DCY - DHW,
+           OV_W, OV_W, OV_W, OV_ACT(kNeed_Up));
+    // Down arm
+    OvRect(DCX - DHW, DCY + DHW, DCX + DHW, DCY + DL,
+           OV_W, OV_W, OV_W, OV_ACT(kNeed_Down));
+    // Left arm
+    OvRect(DCX - DL,  DCY - DHW, DCX - DHW, DCY + DHW,
+           OV_W, OV_W, OV_W, OV_ACT(kNeed_Left));
+    // Right arm
+    OvRect(DCX + DHW, DCY - DHW, DCX + DL,  DCY + DHW,
+           OV_W, OV_W, OV_W, OV_ACT(kNeed_Right));
+    // Centre hub
+    OvRect(DCX - DHW, DCY - DHW, DCX + DHW, DCY + DHW,
+           OV_W, OV_W, OV_W, 0.15f);
+
+    // Arrow icons – small triangles near the tip of each arm
+    float arrowW = DHW * 0.65f;
+    float arrowH = (DL - DHW) * 0.35f;
+    float tipOff = DHW + (DL - DHW) * 0.65f;
+    OvIconArrow(DCX, DCY - tipOff, arrowW, arrowH, 0.0f,   OV_W, OV_W, OV_W, OV_ICON_A); // up
+    OvIconArrow(DCX, DCY + tipOff, arrowW, arrowH, 180.0f, OV_W, OV_W, OV_W, OV_ICON_A); // down
+    OvIconArrow(DCX - tipOff, DCY, arrowW, arrowH, 270.0f, OV_W, OV_W, OV_W, OV_ICON_A); // left
+    OvIconArrow(DCX + tipOff, DCY, arrowW, arrowH, 90.0f,  OV_W, OV_W, OV_W, OV_ICON_A); // right
 
     // ----------------------------------------------------------------
-    // D-pad buttons (left 38% of screen)
-    // Zones match TouchControls.c: dpad_x = nx/0.38
-    //   Up:    dpad_x 0.35..0.65, ny < 0.35
-    //   Down:  dpad_x 0.35..0.65, ny > 0.65
-    //   Left:  dpad_x < 0.35
-    //   Right: dpad_x > 0.65
+    // Attack button – large circle, bottom-right
     // ----------------------------------------------------------------
-    // Up arrow (center third of D-pad, top of screen)
-    DrawOverlayRect(0.09f, 0.04f, 0.29f, 0.35f,  0.3f, 0.5f, 1.0f, BTN_ALPHA(kNeed_Up));
-    // Down arrow
-    DrawOverlayRect(0.09f, 0.65f, 0.29f, 0.96f,  0.3f, 0.5f, 1.0f, BTN_ALPHA(kNeed_Down));
-    // Left arrow
-    DrawOverlayRect(0.01f, 0.25f, 0.13f, 0.75f,  0.3f, 0.5f, 1.0f, BTN_ALPHA(kNeed_Left));
-    // Right arrow
-    DrawOverlayRect(0.25f, 0.25f, 0.37f, 0.75f,  0.3f, 0.5f, 1.0f, BTN_ALPHA(kNeed_Right));
+    OvCircle(TC_ATK_CX, TC_ATK_CY, TC_ATK_R,
+             OV_W, OV_W, OV_W, OV_ACT(kNeed_Attack));
+    // Star/X icon: 4 small triangles radiating outward
+    float atkIconR = TC_ATK_R * 0.50f;
+    float atkIconH = TC_ATK_R * 0.30f;
+    float atkIconW = TC_ATK_R * 0.18f;
+    OvIconArrow(TC_ATK_CX, TC_ATK_CY - atkIconR, atkIconW, atkIconH, 0.0f,   OV_W, OV_W, OV_W, OV_ICON_A);
+    OvIconArrow(TC_ATK_CX, TC_ATK_CY + atkIconR, atkIconW, atkIconH, 180.0f, OV_W, OV_W, OV_W, OV_ICON_A);
+    OvIconArrow(TC_ATK_CX - atkIconR, TC_ATK_CY, atkIconW, atkIconH, 270.0f, OV_W, OV_W, OV_W, OV_ICON_A);
+    OvIconArrow(TC_ATK_CX + atkIconR, TC_ATK_CY, atkIconW, atkIconH, 90.0f,  OV_W, OV_W, OV_W, OV_ICON_A);
 
     // ----------------------------------------------------------------
-    // Action buttons (right side, nx > 0.42)
-    // ax = (nx - 0.42) / 0.58
-    //   ny < 0.5: Pause (ax < 0.4) or NextWeapon (ax >= 0.4)
-    //   ny >= 0.5: PrevWeapon (ax < 0.4) or Attack (ax >= 0.4)
-    // ax=0.4 → nx = 0.42 + 0.4*0.58 = 0.652
+    // Weapon buttons – two medium circles
     // ----------------------------------------------------------------
-    // Pause (upper-left action)
-    DrawOverlayRect(0.44f, 0.04f, 0.63f, 0.46f,  1.0f, 0.9f, 0.2f, BTN_ALPHA(kNeed_UIPause));
-    // Next Weapon (upper-right action)
-    DrawOverlayRect(0.67f, 0.04f, 0.98f, 0.46f,  0.2f, 0.9f, 0.3f, BTN_ALPHA(kNeed_NextWeapon));
-    // Prev Weapon (lower-left action)
-    DrawOverlayRect(0.44f, 0.54f, 0.63f, 0.96f,  0.2f, 0.9f, 0.3f, BTN_ALPHA(kNeed_PrevWeapon));
-    // Attack (lower-right action)
-    DrawOverlayRect(0.67f, 0.54f, 0.98f, 0.96f,  1.0f, 0.2f, 0.2f, BTN_ALPHA(kNeed_Attack));
+    // Next Weapon (>) 
+    OvCircle(TC_NW_CX, TC_NW_CY, TC_NW_R, OV_W, OV_W, OV_W, OV_ACT(kNeed_NextWeapon));
+    OvIconChevron(TC_NW_CX + TC_NW_R * 0.1f, TC_NW_CY,
+                  TC_NW_R * 0.35f, TC_NW_R * 0.45f, +1.0f,
+                  OV_W, OV_W, OV_W, OV_ICON_A);
+    // Prev Weapon (<)
+    OvCircle(TC_PW_CX, TC_PW_CY, TC_PW_R, OV_W, OV_W, OV_W, OV_ACT(kNeed_PrevWeapon));
+    OvIconChevron(TC_PW_CX - TC_PW_R * 0.1f, TC_PW_CY,
+                  TC_PW_R * 0.35f, TC_PW_R * 0.45f, -1.0f,
+                  OV_W, OV_W, OV_W, OV_ICON_A);
+
+    // ----------------------------------------------------------------
+    // Pause – small circle, top-right corner
+    // ----------------------------------------------------------------
+    OvCircle(TC_PAUSE_CX, TC_PAUSE_CY, TC_PAUSE_R,
+             OV_W, OV_W, OV_W, OV_ACT(kNeed_UIPause));
+    OvIconPause(TC_PAUSE_CX, TC_PAUSE_CY,
+                TC_PAUSE_R * 0.18f, TC_PAUSE_R * 0.45f, TC_PAUSE_R * 0.12f,
+                OV_W, OV_W, OV_W, OV_ICON_A);
 
     glDisable(GL_BLEND);
-
     glBindVertexArray(0);
     glUseProgram(0);
 
@@ -420,6 +563,7 @@ static void DrawTouchOverlay(void)
 }
 
 #endif // __ANDROID__
+
 
 const char* gRendererName = "NULL";
 Boolean gCanDoHQStretch = true;
