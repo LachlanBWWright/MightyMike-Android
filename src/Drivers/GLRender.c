@@ -590,12 +590,28 @@ void GLRender_Init(void)
 	glGenBuffers(1, &gQuadVBO);
 	glGenBuffers(1, &gQuadIBO);
 
-	// Pre-upload static indices (quad split into two triangles)
-	static const uint16_t kQuadIndices[6] = { 0, 1, 2, 0, 2, 3 };
-	glBindVertexArray(gQuadVAO);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gQuadIBO);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(kQuadIndices), kQuadIndices, GL_STATIC_DRAW);
-	glBindVertexArray(0);
+	// Set up quad VAO once: bind VBO + IBO, allocate storage, configure attrib pointers.
+	// Using GL_DYNAMIC_DRAW + glBufferSubData every frame avoids per-frame GPU reallocation
+	// (glBufferData(GL_STREAM_DRAW) was causing driver heap fragmentation on Adreno/Mali,
+	// leading to a SIGSEGV after prolonged gameplay — same issue we fixed for gOverlayVBO).
+	{
+		static const uint16_t kQuadIndices[6] = { 0, 1, 2, 0, 2, 3 };
+		glBindVertexArray(gQuadVAO);
+
+		// VBO: 4 vertices × (x,y,u,v) = 64 bytes, allocated once, updated each frame
+		glBindBuffer(GL_ARRAY_BUFFER, gQuadVBO);
+		glBufferData(GL_ARRAY_BUFFER, 4 * 4 * (GLsizeiptr)sizeof(float), NULL, GL_DYNAMIC_DRAW);
+		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * (GLsizei)sizeof(float), (void*)0);
+		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * (GLsizei)sizeof(float), (void*)(2 * sizeof(float)));
+		glEnableVertexAttribArray(0);
+		glEnableVertexAttribArray(1);
+
+		// IBO: 6 static indices
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gQuadIBO);
+		glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(kQuadIndices), kQuadIndices, GL_STATIC_DRAW);
+
+		glBindVertexArray(0);
+	}
 
 	// Create 1×1 white texture used for solid-color drawing (touch control overlay)
 	{
@@ -831,13 +847,12 @@ void GLRender_PresentFramebuffer(void)
 	glUseProgram(gShaderProgram);
 	glUniformMatrix4fv(gUniformMVP, 1, GL_FALSE, mvp);
 
+	// Update quad vertices in-place using glBufferSubData — the VBO was pre-allocated
+	// at init time with GL_DYNAMIC_DRAW so no reallocation (and no GPU memory fragmentation)
+	// occurs here.  Vertex attrib pointers are already configured in the VAO from init.
 	glBindVertexArray(gQuadVAO);
 	glBindBuffer(GL_ARRAY_BUFFER, gQuadVBO);
-	glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)sizeof(verts), verts, GL_STREAM_DRAW);
-	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * (GLsizei)sizeof(float), (void*)0);
-	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * (GLsizei)sizeof(float), (void*)(2 * sizeof(float)));
-	glEnableVertexAttribArray(0);
-	glEnableVertexAttribArray(1);
+	glBufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr)sizeof(verts), verts);
 	glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, 0);
 	glBindVertexArray(0);
 	CHECK_GL_ERROR();

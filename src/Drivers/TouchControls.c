@@ -84,9 +84,17 @@ static Touch gTouches[MAX_TOUCHES];
 static float gJoyNormDX = 0.0f;
 static float gJoyNormDY = 0.0f;
 
+// ---- Cached per-button pressed state (updated each frame in UpdateNeeds) ----
+static bool gBtnPressed[NUM_BUTTONS];
+
 // ---- Cached screen size ----
 static int gScreenW = 1;
 static int gScreenH = 1;
+
+// ---- SDL3 virtual joystick handle (created once, never destroyed) ----
+// Feeds touch-derived analog stick and buttons into the existing SDL_GetGamepadAxis /
+// SDL_GetGamepadButton code paths for proper analog speed-scaling and UI navigation.
+static SDL_Joystick* gVirtualJoystick = NULL;
 
 //------------------------------------------------------------
 // Internal helpers
@@ -144,8 +152,37 @@ void TouchControls_Init(void)
 {
     SDL_memset(&gJoy, 0, sizeof(gJoy));
     SDL_memset(gTouches, 0, sizeof(gTouches));
+    SDL_memset(gBtnPressed, 0, sizeof(gBtnPressed));
     gJoyNormDX = 0.0f;
     gJoyNormDY = 0.0f;
+
+    // Attach an SDL3 virtual joystick the first time we initialise.
+    // Re-initialisation (e.g. after backgrounding) reuses the same handle and
+    // zeros all axes/buttons so no stale input leaks into the next session.
+    // The virtual joystick is opened as a gamepad by Input.c:InitInput() immediately
+    // after this call, so SDL_GetGamepadAxis() and SDL_GetGamepadButton() return our
+    // touch-derived values — giving proper analog speed-scaling and button mappings.
+    if (!gVirtualJoystick)
+    {
+        SDL_VirtualJoystickDesc desc;
+        SDL_INIT_INTERFACE(&desc);
+        desc.type     = (Uint16)SDL_JOYSTICK_TYPE_GAMEPAD;
+        desc.naxes    = (Uint16)SDL_GAMEPAD_AXIS_COUNT;
+        desc.nbuttons = (Uint16)SDL_GAMEPAD_BUTTON_COUNT;
+        desc.name     = "Mighty Mike Touch Controller";
+
+        SDL_JoystickID vjid = SDL_AttachVirtualJoystick(&desc);
+        if (vjid)
+            gVirtualJoystick = SDL_OpenJoystick(vjid);
+    }
+    else
+    {
+        // Clear all virtual inputs so no stale state carries over.
+        SDL_SetJoystickVirtualAxis(gVirtualJoystick, SDL_GAMEPAD_AXIS_LEFTX, 0);
+        SDL_SetJoystickVirtualAxis(gVirtualJoystick, SDL_GAMEPAD_AXIS_LEFTY, 0);
+        for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT; b++)
+            SDL_SetJoystickVirtualButton(gVirtualJoystick, b, false);
+    }
 }
 
 void TouchControls_HandleEvent(const SDL_Event* ev)
@@ -278,6 +315,59 @@ void TouchControls_UpdateNeeds(void)
             gJoyNormDY = dy / normalizer;
         }
     }
+
+    // Compute per-button pressed state (hit-test all active touches against each button).
+    RefreshScreen();
+    for (int b = 0; b < NUM_BUTTONS; b++)
+    {
+        gBtnPressed[b] = false;
+        float cx = (float)gScreenW * kBtnCX[b];
+        float cy = (float)gScreenH * kBtnCY[b];
+        float r  = (float)gScreenH * kBtnRadFrac[b] * BTN_HIT_SCALE;
+        for (int t = 0; t < MAX_TOUCHES; t++)
+        {
+            if (!gTouches[t].active) continue;
+            float dx = gTouches[t].x - cx, dy = gTouches[t].y - cy;
+            if (dx*dx + dy*dy < r*r) { gBtnPressed[b] = true; break; }
+        }
+    }
+
+    // Push touch state into the SDL3 virtual joystick so the existing
+    // SDL_GetGamepadAxis() / SDL_GetGamepadButton() code paths in Input.c pick
+    // up our touch input automatically.  Benefits:
+    //   - GetLeftStickMagnitude_Fix32() returns a real value → proportional speed scaling
+    //   - D-pad buttons cover UI navigation (menus work without touching extra code)
+    //   - Button needs go through the standard gamepad binding table
+    if (gVirtualJoystick)
+    {
+        Sint16 lx = (Sint16)(gJoyNormDX * 32767.0f);
+        Sint16 ly = (Sint16)(gJoyNormDY * 32767.0f);
+        SDL_SetJoystickVirtualAxis(gVirtualJoystick, SDL_GAMEPAD_AXIS_LEFTX, lx);
+        SDL_SetJoystickVirtualAxis(gVirtualJoystick, SDL_GAMEPAD_AXIS_LEFTY, ly);
+
+        // D-pad from stick: threshold ~0.3 (= 9830/32767)
+        Sint16 thr = 9830;
+        SDL_SetJoystickVirtualButton(gVirtualJoystick, SDL_GAMEPAD_BUTTON_DPAD_UP,    ly < -thr);
+        SDL_SetJoystickVirtualButton(gVirtualJoystick, SDL_GAMEPAD_BUTTON_DPAD_DOWN,  ly >  thr);
+        SDL_SetJoystickVirtualButton(gVirtualJoystick, SDL_GAMEPAD_BUTTON_DPAD_LEFT,  lx < -thr);
+        SDL_SetJoystickVirtualButton(gVirtualJoystick, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, lx >  thr);
+
+        // Action buttons mapped to standard gamepad buttons per kDefaultKeyBindings:
+        // BTN_ATTACK → WEST (kNeed_Attack) + SOUTH (kNeed_UIConfirm)
+        SDL_SetJoystickVirtualButton(gVirtualJoystick, SDL_GAMEPAD_BUTTON_WEST,           gBtnPressed[BTN_ATTACK]);
+        SDL_SetJoystickVirtualButton(gVirtualJoystick, SDL_GAMEPAD_BUTTON_SOUTH,          gBtnPressed[BTN_ATTACK]);
+        // BTN_BACK → EAST (kNeed_UIBack)
+        SDL_SetJoystickVirtualButton(gVirtualJoystick, SDL_GAMEPAD_BUTTON_EAST,           gBtnPressed[BTN_BACK]);
+        // BTN_PREV → LEFT_SHOULDER (kNeed_PrevWeapon)
+        SDL_SetJoystickVirtualButton(gVirtualJoystick, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER,  gBtnPressed[BTN_PREV]);
+        // BTN_NEXT → RIGHT_SHOULDER (kNeed_NextWeapon)
+        SDL_SetJoystickVirtualButton(gVirtualJoystick, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, gBtnPressed[BTN_NEXT]);
+        // BTN_PAUSE → START (kNeed_UIPause)
+        SDL_SetJoystickVirtualButton(gVirtualJoystick, SDL_GAMEPAD_BUTTON_START,          gBtnPressed[BTN_PAUSE]);
+        // BTN_RADAR → NORTH (kNeed_Radar)
+        SDL_SetJoystickVirtualButton(gVirtualJoystick, SDL_GAMEPAD_BUTTON_NORTH,          gBtnPressed[BTN_RADAR]);
+        // BTN_MUSIC has no standard gamepad button; handled by TouchControls_IsPressed only
+    }
 }
 
 bool TouchControls_IsPressed(int needID)
@@ -306,19 +396,8 @@ bool TouchControls_IsPressed(int needID)
     default: return false;
     }
 
-    // Check all active non-joystick touches against this button
-    RefreshScreen();
-    float cx = (float)gScreenW * kBtnCX[btnIdx];
-    float cy = (float)gScreenH * kBtnCY[btnIdx];
-    float r  = (float)gScreenH * kBtnRadFrac[btnIdx] * BTN_HIT_SCALE;
-
-    for (int i = 0; i < MAX_TOUCHES; i++)
-    {
-        if (!gTouches[i].active) continue;
-        float dx = gTouches[i].x - cx, dy = gTouches[i].y - cy;
-        if (dx*dx + dy*dy < r*r) return true;
-    }
-    return false;
+    // Return the pre-computed pressed state (updated every frame in TouchControls_UpdateNeeds).
+    return gBtnPressed[btnIdx];
 }
 
 //------------------------------------------------------------
@@ -359,39 +438,19 @@ void TouchControls_DrawOverlay(void)
         thumbY = gJoy.anchorY + dy;
     }
 
-    // ---- Button layout and pressed state ----
+    // ---- Button layout (visual positions and radii) ----
     float btn[NUM_BUTTONS][3];
-    bool  btnPressed[NUM_BUTTONS];
-
     for (int i = 0; i < NUM_BUTTONS; i++)
     {
-        btn[i][0]    = sw * kBtnCX[i];
-        btn[i][1]    = sh * kBtnCY[i];
-        btn[i][2]    = sh * kBtnRadFrac[i];
-        btnPressed[i] = false;
-    }
-
-    // Mark buttons as pressed if any touch is inside their hit area
-    for (int t = 0; t < MAX_TOUCHES; t++)
-    {
-        if (!gTouches[t].active) continue;
-        for (int b = 0; b < NUM_BUTTONS; b++)
-        {
-            if (!btnPressed[b])
-            {
-                float dx = gTouches[t].x - btn[b][0];
-                float dy = gTouches[t].y - btn[b][1];
-                float rHit = btn[b][2] * BTN_HIT_SCALE;
-                if (dx*dx + dy*dy < rHit*rHit)
-                    btnPressed[b] = true;
-            }
-        }
+        btn[i][0] = sw * kBtnCX[i];
+        btn[i][1] = sh * kBtnCY[i];
+        btn[i][2] = sh * kBtnRadFrac[i];
     }
 
     GLRender_DrawTouchControlsOverlay(sw, sh,
         ringCX, ringCY, joyR,
         thumbX, thumbY, gJoy.active,
-        btn, btnPressed);
+        btn, gBtnPressed);
 }
 
 #endif // __ANDROID__

@@ -96,6 +96,12 @@ void InitInput(void)
 {
 #ifdef __ANDROID__
 	TouchControls_Init();
+
+	// Open the virtual joystick attached by TouchControls_Init as the active gamepad.
+	// This is a no-op if a physical gamepad was already opened by TryOpenGamepad() in
+	// GameMain(); on a typical Android device with no physical controller it gives us
+	// proper SDL_GetGamepadAxis() / SDL_GetGamepadButton() values from touch input.
+	TryOpenGamepad(false);
 #endif
 }
 
