@@ -23,6 +23,16 @@
 #include "renderdrivers.h"
 #include "framebufferfilter.h"
 
+#ifdef __ANDROID__
+#include <GLES3/gl3.h>
+// GLES3 uses core buffer functions (no ARB suffix)
+#define glGenBuffersARB         glGenBuffers
+#define glDeleteBuffersARB      glDeleteBuffers
+#define glBindBufferARB         glBindBuffer
+#define glBufferDataARB         glBufferData
+#define glUnmapBufferARB        glUnmapBuffer
+#define GL_PIXEL_UNPACK_BUFFER_ARB  GL_PIXEL_UNPACK_BUFFER
+#else
 #include <SDL3/SDL_opengl.h>
 #include <SDL3/SDL_opengl_glext.h>
 PFNGLGENBUFFERSARBPROC glGenBuffersARB;
@@ -31,6 +41,7 @@ PFNGLBINDBUFFERARBPROC glBindBufferARB;
 PFNGLMAPBUFFERARBPROC glMapBufferARB;
 PFNGLBUFFERDATAARBPROC glBufferDataARB;
 PFNGLUNMAPBUFFERARBPROC glUnmapBufferARB;
+#endif
 
 // Marginal FPS increase at the cost of 1 frame of latency
 #define DEFERRED_TEX_UPDATE 0
@@ -63,6 +74,128 @@ static SDL_GLContext gGLContext = NULL;
 static GLuint gFrameTexture = 0;
 static GLuint gFramePBO = 0;
 static GLint gMaxTextureSize = 0;
+
+#ifdef __ANDROID__
+// GLES 3.0 shader-based quad rendering
+static GLuint gQuadProgram = 0;
+static GLuint gQuadVAO = 0;
+static GLuint gQuadVBO = 0;
+static GLint  gQuadTexLoc = -1;
+
+static const char *kQuadVS =
+    "#version 300 es\n"
+    "precision highp float;\n"
+    "in vec2 a_position;\n"
+    "in vec2 a_texcoord;\n"
+    "out vec2 v_texcoord;\n"
+    "void main() {\n"
+    "    gl_Position = vec4(a_position, 0.0, 1.0);\n"
+    "    v_texcoord = a_texcoord;\n"
+    "}\n";
+
+static const char *kQuadFS =
+    "#version 300 es\n"
+    "precision mediump float;\n"
+    "uniform sampler2D u_texture;\n"
+    "in vec2 v_texcoord;\n"
+    "out vec4 fragColor;\n"
+    "void main() {\n"
+    "    fragColor = texture(u_texture, v_texcoord);\n"
+    "}\n";
+
+static GLuint CompileShader(GLenum type, const char *src)
+{
+    GLuint s = glCreateShader(type);
+    glShaderSource(s, 1, &src, NULL);
+    glCompileShader(s);
+    GLint ok = 0;
+    glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+    if (!ok)
+    {
+        char log[512];
+        glGetShaderInfoLog(s, sizeof(log), NULL, log);
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Shader compile error: %s", log);
+        glDeleteShader(s);
+        return 0;
+    }
+    return s;
+}
+
+static void InitQuadShader(void)
+{
+    GLuint vs = CompileShader(GL_VERTEX_SHADER, kQuadVS);
+    GLuint fs = CompileShader(GL_FRAGMENT_SHADER, kQuadFS);
+    if (!vs || !fs) return;
+
+    gQuadProgram = glCreateProgram();
+    glAttachShader(gQuadProgram, vs);
+    glAttachShader(gQuadProgram, fs);
+    glBindAttribLocation(gQuadProgram, 0, "a_position");
+    glBindAttribLocation(gQuadProgram, 1, "a_texcoord");
+    glLinkProgram(gQuadProgram);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+
+    GLint ok = 0;
+    glGetProgramiv(gQuadProgram, GL_LINK_STATUS, &ok);
+    if (!ok)
+    {
+        char log[512];
+        glGetProgramInfoLog(gQuadProgram, sizeof(log), NULL, log);
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Shader link error: %s", log);
+        glDeleteProgram(gQuadProgram);
+        gQuadProgram = 0;
+        return;
+    }
+
+    gQuadTexLoc = glGetUniformLocation(gQuadProgram, "u_texture");
+
+    // VAO + VBO for the fullscreen quad (positions + texcoords interleaved)
+    glGenVertexArrays(1, &gQuadVAO);
+    glGenBuffers(1, &gQuadVBO);
+    glBindVertexArray(gQuadVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, gQuadVBO);
+
+    // Positions in NDC; texcoords match the texture content area.
+    // Will be updated each frame when we know umax/vmax.
+    // For now allocate the buffer; content is set in GLRender_PresentFramebuffer.
+    float placeholder[24] = {0};
+    glBufferData(GL_ARRAY_BUFFER, sizeof(placeholder), placeholder, GL_DYNAMIC_DRAW);
+
+    // a_position: xy at offset 0, stride 16
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    // a_texcoord: uv at offset 8, stride 16
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+static void DrawQuadGLES(float umax, float vmax)
+{
+    // Upload updated quad vertices (NDC positions + texture coordinates)
+    // Quad covers NDC [-1,1] x [-1,1]; texture Y is flipped (0 at top).
+    float verts[24] = {
+        // x      y     u      v
+        -1.0f, -1.0f,  0.0f, vmax,   // bottom-left
+         1.0f, -1.0f, umax, vmax,   // bottom-right
+        -1.0f,  1.0f,  0.0f,  0.0f,  // top-left
+         1.0f,  1.0f, umax,  0.0f,   // top-right
+    };
+    glBindVertexArray(gQuadVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, gQuadVBO);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(verts), verts);
+
+    glUseProgram(gQuadProgram);
+    glUniform1i(gQuadTexLoc, 0);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+#endif // __ANDROID__
 
 const char* gRendererName = "NULL";
 Boolean gCanDoHQStretch = true;
@@ -106,12 +239,14 @@ SDL_Point FitRectKeepAR(
 
 static void GLRender_InitMatrices(void)
 {
+#ifndef __ANDROID__
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
 	glOrtho(0, VISIBLE_WIDTH, VISIBLE_HEIGHT, 0, 0, 1000);
 
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
+#endif
 }
 
 #define GL_GET_PROC_ADDRESS(t, proc) \
@@ -211,12 +346,14 @@ void GLRender_Init(void)
 	gCanDoHQStretch = gMaxTextureSize >= 2*kFrameTextureWidth;
 #endif
 
+#ifndef __ANDROID__
 	GL_GET_PROC_ADDRESS(PFNGLGENBUFFERSARBPROC, glGenBuffersARB);
 	GL_GET_PROC_ADDRESS(PFNGLDELETEBUFFERSARBPROC, glDeleteBuffersARB);
 	GL_GET_PROC_ADDRESS(PFNGLBINDBUFFERARBPROC, glBindBufferARB);
 	GL_GET_PROC_ADDRESS(PFNGLUNMAPBUFFERPROC, glUnmapBufferARB);
 	GL_GET_PROC_ADDRESS(PFNGLMAPBUFFERARBPROC, glMapBufferARB);
 	GL_GET_PROC_ADDRESS(PFNGLBUFFERDATAARBPROC, glBufferDataARB);
+#endif
 
 #if !(NOVSYNC)
 	SDL_GL_SetSwapInterval(1);
@@ -226,22 +363,28 @@ void GLRender_Init(void)
 
 	GLRender_InitMatrices();
 
+#ifndef __ANDROID__
 	glDisable(GL_FOG);
 	glEnable(GL_TEXTURE_2D);
-	glEnable(GL_CULL_FACE);
 	glDisable(GL_ALPHA_TEST);
+	glDisable(GL_LIGHTING);
+#endif
+	glEnable(GL_CULL_FACE);
 	glDisable(GL_DEPTH_TEST);
 	glDisable(GL_BLEND);
-	glDisable(GL_LIGHTING);
-//	glEnable(GL_COLOR_MATERIAL);
 	glDepthMask(false);
 
+#ifndef __ANDROID__
 	glColor4f(1,1,1,1);
+#endif
 
-	//glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 	glClearColor(0, 0, 0, 1);
 	glClear(GL_COLOR_BUFFER_BIT);
 	CHECK_GL_ERROR();
+
+#ifdef __ANDROID__
+	InitQuadShader();
+#endif
 
 	InitTextureAndPBO(1);
 }
@@ -251,6 +394,12 @@ void GLRender_Shutdown(void)
 	ShutdownRenderThreads();
 
 	DeleteTextureAndPBO();
+
+#ifdef __ANDROID__
+	if (gQuadVBO) { glDeleteBuffers(1, &gQuadVBO); gQuadVBO = 0; }
+	if (gQuadVAO) { glDeleteVertexArrays(1, &gQuadVAO); gQuadVAO = 0; }
+	if (gQuadProgram) { glDeleteProgram(gQuadProgram); gQuadProgram = 0; }
+#endif
 
 	if (gGLContext)
 	{
@@ -335,7 +484,13 @@ void GLRender_PresentFramebuffer(void)
 	glBufferDataARB(GL_PIXEL_UNPACK_BUFFER_ARB, numBytes, NULL, GL_STREAM_DRAW);
 	CHECK_GL_ERROR();
 
+#ifdef __ANDROID__
+	// GLES 3.0 uses glMapBufferRange (glMapBuffer is GLES 3.1+)
+	void* mappedBuffer = glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0, numBytes,
+		GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
+#else
 	void* mappedBuffer = glMapBufferARB(GL_PIXEL_UNPACK_BUFFER_ARB, GL_WRITE_ONLY);
+#endif
 	CHECK_GL_ERROR();
 	GAME_ASSERT(mappedBuffer);
 
@@ -375,6 +530,9 @@ void GLRender_PresentFramebuffer(void)
 	const float umax = vw * (1.0f / kFrameTextureWidth);
 	const float vmax = vh * (1.0f / kFrameTextureHeight);
 
+#ifdef __ANDROID__
+	DrawQuadGLES(umax, vmax);
+#else
 	GLRender_InitMatrices();
 
 	glBegin(GL_QUADS);
@@ -384,6 +542,7 @@ void GLRender_PresentFramebuffer(void)
 	glTexCoord2f(   0,    0); glVertex3f( 0,  0, 0);
 	glEnd();
 	CHECK_GL_ERROR();
+#endif
 
 	SDL_GL_SwapWindow(gSDLWindow);
 
