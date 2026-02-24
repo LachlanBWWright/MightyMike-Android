@@ -23,6 +23,17 @@
 #include "renderdrivers.h"
 #include "framebufferfilter.h"
 
+#ifdef __ANDROID__
+#include <GLES3/gl3.h>
+#include <android/log.h>
+// GLES3 uses core buffer functions (no ARB suffix)
+#define glGenBuffersARB         glGenBuffers
+#define glDeleteBuffersARB      glDeleteBuffers
+#define glBindBufferARB         glBindBuffer
+#define glBufferDataARB         glBufferData
+#define glUnmapBufferARB        glUnmapBuffer
+#define GL_PIXEL_UNPACK_BUFFER_ARB  GL_PIXEL_UNPACK_BUFFER
+#else
 #include <SDL3/SDL_opengl.h>
 #include <SDL3/SDL_opengl_glext.h>
 PFNGLGENBUFFERSARBPROC glGenBuffersARB;
@@ -31,6 +42,7 @@ PFNGLBINDBUFFERARBPROC glBindBufferARB;
 PFNGLMAPBUFFERARBPROC glMapBufferARB;
 PFNGLBUFFERDATAARBPROC glBufferDataARB;
 PFNGLUNMAPBUFFERARBPROC glUnmapBufferARB;
+#endif
 
 // Marginal FPS increase at the cost of 1 frame of latency
 #define DEFERRED_TEX_UPDATE 0
@@ -64,10 +76,43 @@ static GLuint gFrameTexture = 0;
 static GLuint gFramePBO = 0;
 static GLint gMaxTextureSize = 0;
 
-const char* gRendererName = "NULL";
-Boolean gCanDoHQStretch = true;
+#ifdef __ANDROID__
+// On Android we use a plain CPU buffer instead of a PBO to avoid
+// driver-specific glMapBufferRange issues on GLES 3.0.
+static color_t* gAndroidFrameBuffer = NULL;
+static int      gAndroidFrameBufferSize = 0;
+#endif
 
-#if _DEBUG
+// -------------------------------------------------------------------------
+// GL error checking
+// -------------------------------------------------------------------------
+
+#ifdef __ANDROID__
+// On Android, always check GL errors (even in release) since silent crashes
+// are the primary debugging mechanism.  Log to both SDL and Android logcat.
+static void DoGLError(GLenum error, const char* func, int line)
+{
+	const char* errStr = "unknown";
+	switch (error)
+	{
+		case GL_INVALID_ENUM:                  errStr = "GL_INVALID_ENUM"; break;
+		case GL_INVALID_VALUE:                 errStr = "GL_INVALID_VALUE"; break;
+		case GL_INVALID_OPERATION:             errStr = "GL_INVALID_OPERATION"; break;
+		case GL_INVALID_FRAMEBUFFER_OPERATION: errStr = "GL_INVALID_FRAMEBUFFER_OPERATION"; break;
+		case GL_OUT_OF_MEMORY:                 errStr = "GL_OUT_OF_MEMORY"; break;
+	}
+	__android_log_print(ANDROID_LOG_ERROR, "MightyMike",
+		"GL error %s (0x%x) in %s:%d", errStr, error, func, line);
+	SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+		"GL error %s (0x%x) in %s:%d", errStr, error, func, line);
+}
+#define CHECK_GL_ERROR()												\
+	do {																\
+		GLenum err = glGetError();										\
+		if (err != GL_NO_ERROR)											\
+			DoGLError(err, __func__, __LINE__);							\
+	} while(0)
+#elif _DEBUG
 #define CHECK_GL_ERROR()												\
 	do {					 											\
 		GLenum err = glGetError();										\
@@ -75,15 +120,453 @@ Boolean gCanDoHQStretch = true;
 			DoFatalGLError(err, __func__, __LINE__);					\
 	} while(0)
 
-static void DoFatalGLError(GLenum error, const char* file, int line)
+static void DoFatalGLError(GLenum error, const char* func, int line)
 {
 	static char alertbuf[1024];
-	SDL_snprintf(alertbuf, sizeof(alertbuf), "OpenGL error 0x%x\nin %s:%d", error, file, line);
+	SDL_snprintf(alertbuf, sizeof(alertbuf), "OpenGL error 0x%x\nin %s:%d", error, func, line);
 	DoFatalAlert(alertbuf);
 }
 #else
 #define CHECK_GL_ERROR() do {} while(0)
 #endif
+
+#ifdef __ANDROID__
+// GLES 3.0 shader-based quad rendering
+static GLuint gQuadProgram = 0;
+static GLuint gQuadVAO = 0;
+static GLuint gQuadVBO = 0;
+static GLint  gQuadTexLoc = -1;
+
+static const char *kQuadVS =
+    "#version 300 es\n"
+    "precision highp float;\n"
+    "in vec2 a_position;\n"
+    "in vec2 a_texcoord;\n"
+    "out vec2 v_texcoord;\n"
+    "void main() {\n"
+    "    gl_Position = vec4(a_position, 0.0, 1.0);\n"
+    "    v_texcoord = a_texcoord;\n"
+    "}\n";
+
+static const char *kQuadFS =
+    "#version 300 es\n"
+    "precision mediump float;\n"
+    "uniform sampler2D u_texture;\n"
+    "in vec2 v_texcoord;\n"
+    "out vec4 fragColor;\n"
+    "void main() {\n"
+    "    fragColor = texture(u_texture, v_texcoord);\n"
+    "}\n";
+
+static GLuint CompileShader(GLenum type, const char *src)
+{
+    GLuint s = glCreateShader(type);
+    glShaderSource(s, 1, &src, NULL);
+    glCompileShader(s);
+    GLint ok = 0;
+    glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+    if (!ok)
+    {
+        char log[512];
+        glGetShaderInfoLog(s, sizeof(log), NULL, log);
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Shader compile error: %s", log);
+        glDeleteShader(s);
+        return 0;
+    }
+    return s;
+}
+
+static void InitQuadShader(void)
+{
+    SDL_Log("InitQuadShader: compiling shaders");
+    GLuint vs = CompileShader(GL_VERTEX_SHADER, kQuadVS);
+    GLuint fs = CompileShader(GL_FRAGMENT_SHADER, kQuadFS);
+    if (!vs || !fs)
+    {
+        DoFatalAlert("GLES 3.0 shader compilation failed! Check logcat for details.");
+        return;
+    }
+
+    gQuadProgram = glCreateProgram();
+    glAttachShader(gQuadProgram, vs);
+    glAttachShader(gQuadProgram, fs);
+    glBindAttribLocation(gQuadProgram, 0, "a_position");
+    glBindAttribLocation(gQuadProgram, 1, "a_texcoord");
+    glLinkProgram(gQuadProgram);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+
+    GLint ok = 0;
+    glGetProgramiv(gQuadProgram, GL_LINK_STATUS, &ok);
+    if (!ok)
+    {
+        char log[512];
+        glGetProgramInfoLog(gQuadProgram, sizeof(log), NULL, log);
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Shader link error: %s", log);
+        __android_log_print(ANDROID_LOG_ERROR, "MightyMike", "Shader link error: %s", log);
+        glDeleteProgram(gQuadProgram);
+        gQuadProgram = 0;
+        DoFatalAlert("GLES 3.0 shader link failed! Check logcat for details.");
+        return;
+    }
+
+    SDL_Log("InitQuadShader: program linked (id=%u)", gQuadProgram);
+    gQuadTexLoc = glGetUniformLocation(gQuadProgram, "u_texture");
+
+    // VAO + VBO for the fullscreen quad (positions + texcoords interleaved)
+    glGenVertexArrays(1, &gQuadVAO);
+    glGenBuffers(1, &gQuadVBO);
+    glBindVertexArray(gQuadVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, gQuadVBO);
+
+    // Positions in NDC; texcoords match the texture content area.
+    // Will be updated each frame when we know umax/vmax.
+    // For now allocate the buffer; content is set in GLRender_PresentFramebuffer.
+    float placeholder[24] = {0};
+    glBufferData(GL_ARRAY_BUFFER, sizeof(placeholder), placeholder, GL_DYNAMIC_DRAW);
+
+    // a_position: xy at offset 0, stride 16
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    // a_texcoord: uv at offset 8, stride 16
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    CHECK_GL_ERROR();
+    SDL_Log("InitQuadShader: VAO/VBO set up");
+}
+
+static void DrawQuadGLES(float umax, float vmax)
+{
+    // Upload updated quad vertices (NDC positions + texture coordinates)
+    // Quad covers NDC [-1,1] x [-1,1]; texture Y is flipped (0 at top).
+    float verts[24] = {
+        // x      y     u      v
+        -1.0f, -1.0f,  0.0f, vmax,   // bottom-left
+         1.0f, -1.0f, umax, vmax,   // bottom-right
+        -1.0f,  1.0f,  0.0f,  0.0f,  // top-left
+         1.0f,  1.0f, umax,  0.0f,   // top-right
+    };
+    glBindVertexArray(gQuadVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, gQuadVBO);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(verts), verts);
+    CHECK_GL_ERROR();
+
+    glUseProgram(gQuadProgram);
+    glUniform1i(gQuadTexLoc, 0);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    CHECK_GL_ERROR();
+
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+// -------------------------------------------------------------------------
+// Touch controls overlay renderer (GLES 3.0)
+// Draws translucent-white button controls on top of the game framebuffer.
+// -------------------------------------------------------------------------
+
+#include "../Android/TouchControls.h"
+#include "../Headers/structures.h"
+
+static GLuint gOverlayProgram = 0;
+static GLuint gOverlayVAO = 0;
+static GLuint gOverlayVBO = 0;
+static GLint  gOverlayColorLoc = -1;
+
+// Cached window aspect ratio (width / height), updated each DrawTouchOverlay call.
+// Used to draw visually circular button shapes.
+static float gOverlayAR = 1.778f;
+
+// Maximum floats in a single draw-call vertex upload.
+// 20-segment circle: 20 triangles × 3 vertices × 2 floats = 120 floats.
+#define OVERLAY_VBO_FLOATS 256
+
+static const char *kOverlayVS =
+    "#version 300 es\n"
+    "precision highp float;\n"
+    "in vec2 a_pos;\n"
+    "void main() {\n"
+    "    gl_Position = vec4(a_pos, 0.0, 1.0);\n"
+    "}\n";
+
+static const char *kOverlayFS =
+    "#version 300 es\n"
+    "precision mediump float;\n"
+    "uniform vec4 u_color;\n"
+    "out vec4 fragColor;\n"
+    "void main() {\n"
+    "    fragColor = u_color;\n"
+    "}\n";
+
+static void InitOverlayShader(void)
+{
+    GLuint vs = CompileShader(GL_VERTEX_SHADER, kOverlayVS);
+    GLuint fs = CompileShader(GL_FRAGMENT_SHADER, kOverlayFS);
+    if (!vs || !fs)
+    {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Overlay shader compile failed");
+        return;
+    }
+
+    gOverlayProgram = glCreateProgram();
+    glAttachShader(gOverlayProgram, vs);
+    glAttachShader(gOverlayProgram, fs);
+    glBindAttribLocation(gOverlayProgram, 0, "a_pos");
+    glLinkProgram(gOverlayProgram);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+
+    GLint ok = 0;
+    glGetProgramiv(gOverlayProgram, GL_LINK_STATUS, &ok);
+    if (!ok)
+    {
+        char logbuf[256];
+        glGetProgramInfoLog(gOverlayProgram, sizeof(logbuf), NULL, logbuf);
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Overlay shader link: %s", logbuf);
+        glDeleteProgram(gOverlayProgram);
+        gOverlayProgram = 0;
+        return;
+    }
+
+    gOverlayColorLoc = glGetUniformLocation(gOverlayProgram, "u_color");
+
+    glGenVertexArrays(1, &gOverlayVAO);
+    glGenBuffers(1, &gOverlayVBO);
+    glBindVertexArray(gOverlayVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, gOverlayVBO);
+    float placeholder[OVERLAY_VBO_FLOATS] = {0};
+    glBufferData(GL_ARRAY_BUFFER, sizeof(placeholder), placeholder, GL_DYNAMIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+// -------------------------------------------------------------------------
+// Low-level draw helpers (all coordinates in normalised screen space [0..1],
+// Y=0 at top).  Uploads directly into gOverlayVBO and issues a draw call.
+// -------------------------------------------------------------------------
+
+// normalised → NDC
+static float ovNX(float n) { return 2.0f * n - 1.0f; }
+static float ovNY(float n) { return 1.0f - 2.0f * n; }
+
+// Upload verts[] and draw.
+static void OvDraw(GLenum mode, const float *verts, int vertCount, float r, float g, float b, float a)
+{
+    glBindBuffer(GL_ARRAY_BUFFER, gOverlayVBO);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, vertCount * 2 * sizeof(float), verts);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glUniform4f(gOverlayColorLoc, r, g, b, a);
+    glDrawArrays(mode, 0, vertCount);
+}
+
+// Draw a filled axis-aligned rectangle.
+static void OvRect(float nx0, float ny0, float nx1, float ny1, float r, float g, float b, float a)
+{
+    float x0 = ovNX(nx0), y0 = ovNY(ny1);
+    float x1 = ovNX(nx1), y1 = ovNY(ny0);
+    float v[8] = { x0,y0, x1,y0, x0,y1, x1,y1 };
+    OvDraw(GL_TRIANGLE_STRIP, v, 4, r, g, b, a);
+}
+
+// Draw a filled circle.
+// ncx, ncy  – normalised centre.
+// nr        – normalised radius in the Y axis (use AR to keep it visually round).
+#define OV_CIRCLE_SEGS 24
+static void OvCircle(float ncx, float ncy, float nr, float r, float g, float b, float a)
+{
+    float cx = ovNX(ncx);
+    float cy = ovNY(ncy);
+    float ry = nr * 2.0f;               // NDC Y radius
+    float rx = ry / gOverlayAR;         // NDC X radius (AR-corrected for round appearance)
+
+    float v[OV_CIRCLE_SEGS * 3 * 2];
+    const float kStep = 2.0f * 3.14159265f / OV_CIRCLE_SEGS;
+    for (int i = 0; i < OV_CIRCLE_SEGS; i++)
+    {
+        float a0 = kStep * i;
+        float a1 = kStep * (i + 1);
+        int o = i * 6;
+        v[o+0] = cx;                     v[o+1] = cy;
+        v[o+2] = cx + rx * SDL_cosf(a0); v[o+3] = cy + ry * SDL_sinf(a0);
+        v[o+4] = cx + rx * SDL_cosf(a1); v[o+5] = cy + ry * SDL_sinf(a1);
+    }
+    OvDraw(GL_TRIANGLES, v, OV_CIRCLE_SEGS * 3, r, g, b, a);
+}
+
+// Draw a filled triangle (normalised coords).
+static void OvTriangle(float nx0, float ny0, float nx1, float ny1,
+                        float nx2, float ny2, float r, float g, float b, float a)
+{
+    float v[6] = { ovNX(nx0),ovNY(ny0), ovNX(nx1),ovNY(ny1), ovNX(nx2),ovNY(ny2) };
+    OvDraw(GL_TRIANGLES, v, 3, r, g, b, a);
+}
+
+// -------------------------------------------------------------------------
+// Icon helpers (drawn on top of button backgrounds)
+// -------------------------------------------------------------------------
+
+// Arrow pointing UP, centred at (cx, cy), half-size s (normalised)
+static void OvIconArrow(float cx, float cy, float sw, float sh,
+                         float angle_deg,  // 0=up, 90=right, 180=down, 270=left
+                         float r, float g, float b, float a)
+{
+    // Build arrow pointing up, then rotate
+    float rad = angle_deg * 3.14159265f / 180.0f;
+    float cosA = SDL_cosf(rad), sinA = SDL_sinf(rad);
+
+    // Triangle vertices in object space (unrotated, pointing up)
+    float pts[3][2] = {
+        {  0,    -sh },   // tip
+        { -sw,   +sh },   // bottom-left
+        { +sw,   +sh },   // bottom-right
+    };
+
+    // Rotate and translate
+    float x[3], y[3];
+    for (int i = 0; i < 3; i++)
+    {
+        float lx = pts[i][0], ly = pts[i][1];
+        x[i] = cx + lx * cosA - ly * sinA;
+        y[i] = cy + lx * sinA + ly * cosA;
+    }
+    OvTriangle(x[0], y[0], x[1], y[1], x[2], y[2], r, g, b, a);
+}
+
+// Two vertical bars – classic pause icon
+static void OvIconPause(float cx, float cy, float bw, float bh, float gap,
+                          float r, float g, float b, float a)
+{
+    OvRect(cx - gap - bw, cy - bh, cx - gap, cy + bh, r, g, b, a);
+    OvRect(cx + gap,      cy - bh, cx + gap + bw, cy + bh, r, g, b, a);
+}
+
+// ">>" chevron icon for NextWeapon
+static void OvIconChevron(float cx, float cy, float sw, float sh, float dir,
+                            float r, float g, float b, float a)
+{
+    // dir: +1 = pointing right, -1 = pointing left
+    float angle = (dir > 0) ? 90.0f : 270.0f;
+    OvIconArrow(cx, cy, sw, sh, angle, r, g, b, a);
+}
+
+// -------------------------------------------------------------------------
+// Main overlay draw
+// -------------------------------------------------------------------------
+
+#define OV_IDLE_A    0.20f
+#define OV_ACTIVE_A  0.55f
+#define OV_ICON_A    0.80f
+#define OV_ACT(need) (TouchControls_GetNeedActive(need) ? OV_ACTIVE_A : OV_IDLE_A)
+#define OV_W         1.0f  // white
+#define OV_BG_R      1.0f
+#define OV_BG_G      1.0f
+#define OV_BG_B      1.0f
+
+static void DrawTouchOverlay(void)
+{
+    if (!gOverlayProgram || !gOverlayVAO) return;
+
+    // Update aspect ratio from actual window dimensions
+    int winW = 1, winH = 1;
+    SDL_GetWindowSize(gSDLWindow, &winW, &winH);
+    if (winH > 0) gOverlayAR = (float)winW / (float)winH;
+
+    glUseProgram(gOverlayProgram);
+    glBindVertexArray(gOverlayVAO);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    // ----------------------------------------------------------------
+    // D-pad – circular base + 4 directional arms + arrow icons
+    // ----------------------------------------------------------------
+    const float DCX = TC_DPAD_CX;
+    const float DCY = TC_DPAD_CY;
+    const float DHW = TC_DPAD_ARM_HW;
+    const float DL  = TC_DPAD_ARM_L;
+
+    // Outer ring (joystick base)
+    float baseR = DL + DHW + 0.01f;
+    OvCircle(DCX, DCY, baseR, OV_W, OV_W, OV_W, 0.10f);
+
+    // Up arm
+    OvRect(DCX - DHW, DCY - DL, DCX + DHW, DCY - DHW,
+           OV_W, OV_W, OV_W, OV_ACT(kNeed_Up));
+    // Down arm
+    OvRect(DCX - DHW, DCY + DHW, DCX + DHW, DCY + DL,
+           OV_W, OV_W, OV_W, OV_ACT(kNeed_Down));
+    // Left arm
+    OvRect(DCX - DL,  DCY - DHW, DCX - DHW, DCY + DHW,
+           OV_W, OV_W, OV_W, OV_ACT(kNeed_Left));
+    // Right arm
+    OvRect(DCX + DHW, DCY - DHW, DCX + DL,  DCY + DHW,
+           OV_W, OV_W, OV_W, OV_ACT(kNeed_Right));
+    // Centre hub
+    OvRect(DCX - DHW, DCY - DHW, DCX + DHW, DCY + DHW,
+           OV_W, OV_W, OV_W, 0.15f);
+
+    // Arrow icons – small triangles near the tip of each arm
+    float arrowW = DHW * 0.65f;
+    float arrowH = (DL - DHW) * 0.35f;
+    float tipOff = DHW + (DL - DHW) * 0.65f;
+    OvIconArrow(DCX, DCY - tipOff, arrowW, arrowH, 0.0f,   OV_W, OV_W, OV_W, OV_ICON_A); // up
+    OvIconArrow(DCX, DCY + tipOff, arrowW, arrowH, 180.0f, OV_W, OV_W, OV_W, OV_ICON_A); // down
+    OvIconArrow(DCX - tipOff, DCY, arrowW, arrowH, 270.0f, OV_W, OV_W, OV_W, OV_ICON_A); // left
+    OvIconArrow(DCX + tipOff, DCY, arrowW, arrowH, 90.0f,  OV_W, OV_W, OV_W, OV_ICON_A); // right
+
+    // ----------------------------------------------------------------
+    // Attack button – large circle, bottom-right
+    // ----------------------------------------------------------------
+    OvCircle(TC_ATK_CX, TC_ATK_CY, TC_ATK_R,
+             OV_W, OV_W, OV_W, OV_ACT(kNeed_Attack));
+    // Star/X icon: 4 small triangles radiating outward
+    float atkIconR = TC_ATK_R * 0.50f;
+    float atkIconH = TC_ATK_R * 0.30f;
+    float atkIconW = TC_ATK_R * 0.18f;
+    OvIconArrow(TC_ATK_CX, TC_ATK_CY - atkIconR, atkIconW, atkIconH, 0.0f,   OV_W, OV_W, OV_W, OV_ICON_A);
+    OvIconArrow(TC_ATK_CX, TC_ATK_CY + atkIconR, atkIconW, atkIconH, 180.0f, OV_W, OV_W, OV_W, OV_ICON_A);
+    OvIconArrow(TC_ATK_CX - atkIconR, TC_ATK_CY, atkIconW, atkIconH, 270.0f, OV_W, OV_W, OV_W, OV_ICON_A);
+    OvIconArrow(TC_ATK_CX + atkIconR, TC_ATK_CY, atkIconW, atkIconH, 90.0f,  OV_W, OV_W, OV_W, OV_ICON_A);
+
+    // ----------------------------------------------------------------
+    // Weapon buttons – two medium circles
+    // ----------------------------------------------------------------
+    // Next Weapon (>) 
+    OvCircle(TC_NW_CX, TC_NW_CY, TC_NW_R, OV_W, OV_W, OV_W, OV_ACT(kNeed_NextWeapon));
+    OvIconChevron(TC_NW_CX + TC_NW_R * 0.1f, TC_NW_CY,
+                  TC_NW_R * 0.35f, TC_NW_R * 0.45f, +1.0f,
+                  OV_W, OV_W, OV_W, OV_ICON_A);
+    // Prev Weapon (<)
+    OvCircle(TC_PW_CX, TC_PW_CY, TC_PW_R, OV_W, OV_W, OV_W, OV_ACT(kNeed_PrevWeapon));
+    OvIconChevron(TC_PW_CX - TC_PW_R * 0.1f, TC_PW_CY,
+                  TC_PW_R * 0.35f, TC_PW_R * 0.45f, -1.0f,
+                  OV_W, OV_W, OV_W, OV_ICON_A);
+
+    // ----------------------------------------------------------------
+    // Pause – small circle, top-right corner
+    // ----------------------------------------------------------------
+    OvCircle(TC_PAUSE_CX, TC_PAUSE_CY, TC_PAUSE_R,
+             OV_W, OV_W, OV_W, OV_ACT(kNeed_UIPause));
+    OvIconPause(TC_PAUSE_CX, TC_PAUSE_CY,
+                TC_PAUSE_R * 0.18f, TC_PAUSE_R * 0.45f, TC_PAUSE_R * 0.12f,
+                OV_W, OV_W, OV_W, OV_ICON_A);
+
+    glDisable(GL_BLEND);
+    glBindVertexArray(0);
+    glUseProgram(0);
+
+    CHECK_GL_ERROR();
+}
+
+#endif // __ANDROID__
+
+
+const char* gRendererName = "NULL";
+Boolean gCanDoHQStretch = true;
 
 SDL_Point FitRectKeepAR(
 		int logicalWidth,
@@ -106,12 +589,14 @@ SDL_Point FitRectKeepAR(
 
 static void GLRender_InitMatrices(void)
 {
+#ifndef __ANDROID__
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
 	glOrtho(0, VISIBLE_WIDTH, VISIBLE_HEIGHT, 0, 0, 1000);
 
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
+#endif
 }
 
 #define GL_GET_PROC_ADDRESS(t, proc) \
@@ -125,8 +610,10 @@ static void InitTextureAndPBO(int pixelZoom)
 	glGenTextures(1, &gFrameTexture);
 	CHECK_GL_ERROR();
 
+#ifndef __ANDROID__
 	glGenBuffersARB(1, &gFramePBO);
 	CHECK_GL_ERROR();
+#endif
 
 #if 0
 	glBindBufferARB(GL_PIXEL_UNPACK_BUFFER_ARB, gFramePBO);
@@ -160,6 +647,18 @@ static void InitTextureAndPBO(int pixelZoom)
 			NULL // need initial call with NULL so glTexSubImage2D works later on
 	);
 	CHECK_GL_ERROR();
+
+#ifdef __ANDROID__
+	// Android uses a plain CPU buffer (no PBO) for texture upload
+	int bufferSize = kFrameTextureWidth * pixelZoom * kFrameTextureHeight * pixelZoom * kFrameBytesPerPixel;
+	if (bufferSize != gAndroidFrameBufferSize)
+	{
+		SDL_free(gAndroidFrameBuffer);
+		gAndroidFrameBuffer = (color_t*) SDL_malloc(bufferSize);
+		gAndroidFrameBufferSize = bufferSize;
+		SDL_Log("GLRender: allocated %d-byte frame buffer (zoom %d)", bufferSize, pixelZoom);
+	}
+#endif
 }
 
 static void DeleteTextureAndPBO(void)
@@ -170,16 +669,24 @@ static void DeleteTextureAndPBO(void)
 		gFrameTexture = 0;
 	}
 
+#ifndef __ANDROID__
 	if (gFramePBO != 0)
 	{
 		glDeleteBuffersARB(1, &gFramePBO);
 		gFramePBO = 0;
 	}
+#endif
+
+#ifdef __ANDROID__
+	SDL_free(gAndroidFrameBuffer);
+	gAndroidFrameBuffer = NULL;
+	gAndroidFrameBufferSize = 0;
+#endif
 }
 
 void GLRender_Init(void)
 {
-	SDL_Log("Using special PPC renderer!");
+	SDL_Log("GLRender_Init: starting");
 
 #if FRAMEBUFFER_COLOR_DEPTH == 32
 	gRendererName = "fastgl32";
@@ -190,13 +697,25 @@ void GLRender_Init(void)
 #endif
 
 	gGLContext = SDL_GL_CreateContext(gSDLWindow);
-	GAME_ASSERT(gGLContext);
+	if (!gGLContext)
+	{
+		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "GL CreateContext FAILED: %s", SDL_GetError());
+		GAME_ASSERT(gGLContext);
+	}
+	SDL_Log("GLRender_Init: GL context created");
 
 	bool didMakeCurrent = SDL_GL_MakeCurrent(gSDLWindow, gGLContext);
 	GAME_ASSERT_MESSAGE(didMakeCurrent, SDL_GetError());
+	SDL_Log("GLRender_Init: GL context made current");
 
 	glGetIntegerv(GL_MAX_TEXTURE_SIZE, &gMaxTextureSize);
-	SDL_Log("Max texture size: %d", (int) gMaxTextureSize);
+	SDL_Log("GLRender_Init: Max texture size: %d", (int) gMaxTextureSize);
+
+#ifdef __ANDROID__
+	SDL_Log("GLRender_Init: GL_VENDOR   = %s", glGetString(GL_VENDOR));
+	SDL_Log("GLRender_Init: GL_RENDERER = %s", glGetString(GL_RENDERER));
+	SDL_Log("GLRender_Init: GL_VERSION  = %s", glGetString(GL_VERSION));
+#endif
 
 	if (gMaxTextureSize < kFrameTextureWidth)
 	{
@@ -211,12 +730,14 @@ void GLRender_Init(void)
 	gCanDoHQStretch = gMaxTextureSize >= 2*kFrameTextureWidth;
 #endif
 
+#ifndef __ANDROID__
 	GL_GET_PROC_ADDRESS(PFNGLGENBUFFERSARBPROC, glGenBuffersARB);
 	GL_GET_PROC_ADDRESS(PFNGLDELETEBUFFERSARBPROC, glDeleteBuffersARB);
 	GL_GET_PROC_ADDRESS(PFNGLBINDBUFFERARBPROC, glBindBufferARB);
 	GL_GET_PROC_ADDRESS(PFNGLUNMAPBUFFERPROC, glUnmapBufferARB);
 	GL_GET_PROC_ADDRESS(PFNGLMAPBUFFERARBPROC, glMapBufferARB);
 	GL_GET_PROC_ADDRESS(PFNGLBUFFERDATAARBPROC, glBufferDataARB);
+#endif
 
 #if !(NOVSYNC)
 	SDL_GL_SetSwapInterval(1);
@@ -226,24 +747,34 @@ void GLRender_Init(void)
 
 	GLRender_InitMatrices();
 
+#ifndef __ANDROID__
 	glDisable(GL_FOG);
 	glEnable(GL_TEXTURE_2D);
-	glEnable(GL_CULL_FACE);
 	glDisable(GL_ALPHA_TEST);
+	glDisable(GL_LIGHTING);
+#endif
+	glEnable(GL_CULL_FACE);
 	glDisable(GL_DEPTH_TEST);
 	glDisable(GL_BLEND);
-	glDisable(GL_LIGHTING);
-//	glEnable(GL_COLOR_MATERIAL);
 	glDepthMask(false);
 
+#ifndef __ANDROID__
 	glColor4f(1,1,1,1);
+#endif
 
-	//glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 	glClearColor(0, 0, 0, 1);
 	glClear(GL_COLOR_BUFFER_BIT);
 	CHECK_GL_ERROR();
 
+#ifdef __ANDROID__
+	InitQuadShader();
+	SDL_Log("GLRender_Init: quad shader ready");
+	InitOverlayShader();
+	SDL_Log("GLRender_Init: overlay shader ready");
+#endif
+
 	InitTextureAndPBO(1);
+	SDL_Log("GLRender_Init: texture and buffer ready");
 }
 
 void GLRender_Shutdown(void)
@@ -251,6 +782,15 @@ void GLRender_Shutdown(void)
 	ShutdownRenderThreads();
 
 	DeleteTextureAndPBO();
+
+#ifdef __ANDROID__
+	if (gQuadVBO) { glDeleteBuffers(1, &gQuadVBO); gQuadVBO = 0; }
+	if (gQuadVAO) { glDeleteVertexArrays(1, &gQuadVAO); gQuadVAO = 0; }
+	if (gQuadProgram) { glDeleteProgram(gQuadProgram); gQuadProgram = 0; }
+	if (gOverlayVBO) { glDeleteBuffers(1, &gOverlayVBO); gOverlayVBO = 0; }
+	if (gOverlayVAO) { glDeleteVertexArrays(1, &gOverlayVAO); gOverlayVAO = 0; }
+	if (gOverlayProgram) { glDeleteProgram(gOverlayProgram); gOverlayProgram = 0; }
+#endif
 
 	if (gGLContext)
 	{
@@ -299,7 +839,18 @@ void GLRender_PresentFramebuffer(void)
 	const int vh = VISIBLE_HEIGHT;
 
 	bool didMakeCurrent = SDL_GL_MakeCurrent(gSDLWindow, gGLContext);
+#ifdef __ANDROID__
+	if (!didMakeCurrent)
+	{
+		// On Android the EGL surface may be momentarily unavailable
+		// (e.g. when the activity is partially obscured). Skip this frame.
+		SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+			"SDL_GL_MakeCurrent failed: %s -- skipping frame", SDL_GetError());
+		return;
+	}
+#else
 	GAME_ASSERT_MESSAGE(didMakeCurrent, SDL_GetError());
+#endif
 
 	//-------------------------------------------------------------------------
 	// Update dimensions
@@ -325,12 +876,29 @@ void GLRender_PresentFramebuffer(void)
 	int zvh = (isHQ ? 2 : 1) * vh;
 
 	//-------------------------------------------------------------------------
-	// Update PBO
+	// Update frame data
 
+#ifdef __ANDROID__
+	// Android: use a plain CPU buffer instead of a PBO.
+	// PBO + glMapBufferRange has driver-specific issues on some GLES 3.0 devices.
+	{
+		int numBytes = zvw * zvh * kFrameBytesPerPixel;
+		if (!gAndroidFrameBuffer || numBytes > gAndroidFrameBufferSize)
+		{
+			// Buffer needs (re)allocation
+			SDL_free(gAndroidFrameBuffer);
+			gAndroidFrameBuffer = (color_t*) SDL_malloc(numBytes);
+			gAndroidFrameBufferSize = numBytes;
+		}
+		GAME_ASSERT(gAndroidFrameBuffer);
+		ConvertFramebufferMT(gAndroidFrameBuffer);
+	}
+#else
+	// Desktop: use PBO for streaming
 	glBindBufferARB(GL_PIXEL_UNPACK_BUFFER_ARB, gFramePBO);
 	CHECK_GL_ERROR();
 
-	// get new PBO
+	// Orphan old PBO and allocate new one
 	int numBytes = zvw * zvh * kFrameBytesPerPixel;
 	glBufferDataARB(GL_PIXEL_UNPACK_BUFFER_ARB, numBytes, NULL, GL_STREAM_DRAW);
 	CHECK_GL_ERROR();
@@ -344,6 +912,7 @@ void GLRender_PresentFramebuffer(void)
 
 	glUnmapBufferARB(GL_PIXEL_UNPACK_BUFFER_ARB);
 	CHECK_GL_ERROR();
+#endif
 
 	//-------------------------------------------------------------------------
 	// Draw the quad
@@ -368,13 +937,23 @@ void GLRender_PresentFramebuffer(void)
 
 #if !DEFERRED_TEX_UPDATE
 	// Update the texture
+#ifdef __ANDROID__
+	// With a CPU buffer (no PBO), pass the buffer pointer directly.
+	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, zvw, zvh, kFramePixelFormat, kFramePixelType, gAndroidFrameBuffer);
+#else
+	// With PBO bound, NULL means offset 0 into the PBO.
 	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, zvw, zvh, kFramePixelFormat, kFramePixelType, NULL);
+#endif
 	CHECK_GL_ERROR();
 #endif
 
 	const float umax = vw * (1.0f / kFrameTextureWidth);
 	const float vmax = vh * (1.0f / kFrameTextureHeight);
 
+#ifdef __ANDROID__
+	DrawQuadGLES(umax, vmax);
+	DrawTouchOverlay();
+#else
 	GLRender_InitMatrices();
 
 	glBegin(GL_QUADS);
@@ -384,6 +963,7 @@ void GLRender_PresentFramebuffer(void)
 	glTexCoord2f(   0,    0); glVertex3f( 0,  0, 0);
 	glEnd();
 	CHECK_GL_ERROR();
+#endif
 
 	SDL_GL_SwapWindow(gSDLWindow);
 
@@ -391,7 +971,11 @@ void GLRender_PresentFramebuffer(void)
 	//-------------------------------------------------------------------------
 	// Update texture
 
+#ifdef __ANDROID__
+	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, zvw, zvh, kFramePixelFormat, kFramePixelType, gAndroidFrameBuffer);
+#else
 	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, zvw, zvh, kFramePixelFormat, kFramePixelType, NULL);
+#endif
 	CHECK_GL_ERROR();
 #endif
 }

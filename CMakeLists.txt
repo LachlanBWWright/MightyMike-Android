@@ -24,6 +24,12 @@ option(SDL_STATIC "Static link SDL" OFF)
 
 option(SANITIZE "Build with asan/ubsan" OFF)
 
+if(ANDROID)
+	# Android always builds SDL from source and uses a shared library
+	set(BUILD_SDL_FROM_SOURCE ON CACHE BOOL "Build SDL from source for Android" FORCE)
+	set(SDL_STATIC OFF CACHE BOOL "Use shared SDL on Android" FORCE)
+endif()
+
 if(WIN32 OR APPLE)
 	# Don't warn
 elseif(SANITIZE)
@@ -82,20 +88,53 @@ if(NOT BUILD_SDL_FROM_SOURCE)
 	find_package(SDL3 CONFIG REQUIRED)
 	message("Found pre-built SDL3")
 else()
-	if(NOT DEFINED SDL3_DIR)
-		set(SDL3_DIR "${CMAKE_SOURCE_DIR}/extern/SDL")
+	set(_sdl3_src "${CMAKE_SOURCE_DIR}/extern/SDL")
+	if(DEFINED SDL3_DIR AND EXISTS "${SDL3_DIR}/CMakeLists.txt")
+		set(_sdl3_src "${SDL3_DIR}")
 	endif()
-	message("Building SDL3 from source: " ${SDL3_DIR})
-	add_subdirectory("${SDL3_DIR}" EXCLUDE_FROM_ALL)
+	set(_sdl3_bin "${CMAKE_BINARY_DIR}/extern/SDL")
+	message("Building SDL3 from source: " ${_sdl3_src})
+	add_subdirectory("${_sdl3_src}" "${_sdl3_bin}" EXCLUDE_FROM_ALL)
+	# SDL3Config.cmake is generated in the binary dir; point SDL3_DIR there so
+	# downstream find_package(SDL3) calls (e.g. from Pomme) can find it.
+	set(SDL3_DIR "${_sdl3_bin}" CACHE PATH "SDL3 build dir" FORCE)
 endif()
 
 #------------------------------------------------------------------------------
 # DEPENDENCIES
 #------------------------------------------------------------------------------
 
+# If SDL3 was added as a subdirectory above, create a shim config file that
+# Pomme's find_package(SDL3 REQUIRED) can use instead of the export()-generated
+# file (which some CMake versions refuse to include() from a subproject).
+if(BUILD_SDL_FROM_SOURCE)
+	if(TARGET SDL3::SDL3-shared)
+		set(_sdl3_shim_dir "${CMAKE_BINARY_DIR}/sdl3-shim")
+		file(MAKE_DIRECTORY "${_sdl3_shim_dir}")
+		file(WRITE "${_sdl3_shim_dir}/SDL3Config.cmake"
+			"# Shim: SDL3 already defined via add_subdirectory.\n"
+			"set(SDL3_FOUND TRUE)\n"
+			"if(NOT TARGET SDL3::SDL3)\n"
+			"  add_library(SDL3::SDL3 INTERFACE IMPORTED)\n"
+			"  target_link_libraries(SDL3::SDL3 INTERFACE SDL3::SDL3-shared)\n"
+			"  target_include_directories(SDL3::SDL3 INTERFACE\n"
+			"    \$<TARGET_PROPERTY:SDL3::SDL3-shared,INTERFACE_INCLUDE_DIRECTORIES>)\n"
+			"endif()\n"
+		)
+		file(WRITE "${_sdl3_shim_dir}/SDL3ConfigVersion.cmake"
+			"set(PACKAGE_VERSION \"3\")\n"
+			"set(PACKAGE_VERSION_COMPATIBLE TRUE)\n"
+			"set(PACKAGE_VERSION_EXACT FALSE)\n"
+		)
+		set(SDL3_DIR "${_sdl3_shim_dir}" CACHE PATH "SDL3 shim dir" FORCE)
+	endif()
+endif()
+
 add_subdirectory(extern/Pomme)
 
-find_package(OpenGL REQUIRED)  # only actually required if we want to force GLRENDER
+if(NOT ANDROID)
+	find_package(OpenGL REQUIRED)  # only actually required if we want to force GLRENDER
+endif()
 
 #------------------------------------------------------------------------------
 # EXECUTABLE TARGET
@@ -119,9 +158,20 @@ elseif(APPLE)
 	set_source_files_properties(${CMAKE_SOURCE_DIR}/packaging/${GAME_TARGET}.icns PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
 endif()
 
-add_executable(${GAME_TARGET} ${GAME_SOURCES})
+if(ANDROID)
+	# Android requires a shared library loaded by SDL's Java layer
+	# SDL3's SDLActivity.java looks for "libmain.so" by default
+	add_library(main SHARED ${GAME_SOURCES})
+	set(GAME_TARGET_ANDROID main)
+else()
+	add_executable(${GAME_TARGET} ${GAME_SOURCES})
+	set(GAME_TARGET_ANDROID ${GAME_TARGET})
+endif()
 
-target_include_directories(${GAME_TARGET} PRIVATE ${GAME_SRCDIR}/Headers)
+target_include_directories(${GAME_TARGET_ANDROID} PRIVATE ${GAME_SRCDIR}/Headers)
+if(ANDROID)
+	target_include_directories(${GAME_TARGET_ANDROID} PRIVATE ${GAME_SRCDIR}/Android)
+endif()
 
 #------------------------------------------------------------------------------
 # COMPILER/LINKER OPTIONS
@@ -133,11 +183,11 @@ add_compile_definitions(
 	#NOVSYNC    # Mighty Mike only
 )
 
-target_compile_definitions(${GAME_TARGET} PRIVATE
+target_compile_definitions(${GAME_TARGET_ANDROID} PRIVATE
 	GL_SILENCE_DEPRECATION)
 
 if(NOT MSVC)
-	target_compile_options(${GAME_TARGET} PRIVATE
+	target_compile_options(${GAME_TARGET_ANDROID} PRIVATE
 		-fexceptions
 		-Wall
 		-Wextra
@@ -151,7 +201,7 @@ if(NOT MSVC)
 	# Sanitizers in debug mode (Linux only)
 	# When using a debugger, you should export LSAN_OPTIONS=detect_leaks=0
 	if(SANITIZE)
-		target_compile_options(${GAME_TARGET} PRIVATE
+		target_compile_options(${GAME_TARGET_ANDROID} PRIVATE
 			-fsanitize=alignment
 			-fsanitize=address
 			-fsanitize=leak
@@ -160,13 +210,13 @@ if(NOT MSVC)
 		)
 	endif()
 else()
-	target_compile_definitions(${GAME_TARGET} PRIVATE
+	target_compile_definitions(${GAME_TARGET_ANDROID} PRIVATE
 		WIN32_LEAN_AND_MEAN
 		NOGDI				# don't clash with Mac function names
 		NOUSER				# don't clash with Mac function names
 	)
 
-	target_compile_options(${GAME_TARGET} PRIVATE
+	target_compile_options(${GAME_TARGET_ANDROID} PRIVATE
 		/EHs	# synchronous exceptions; also, extern "C" functions may throw exceptions
 		/W4
 		/wd4068 # ignore unrecognized pragmas
@@ -181,11 +231,11 @@ else()
 	)
 
 	# Let executable be debugged with PDB, even in Release builds
-	target_link_options(${GAME_TARGET} PRIVATE /DEBUG)
+	target_link_options(${GAME_TARGET_ANDROID} PRIVATE /DEBUG)
 
 	# Enable console for debug builds
-	set_target_properties(${GAME_TARGET} PROPERTIES LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE")
-	set_target_properties(${GAME_TARGET} PROPERTIES COMPILE_DEFINITIONS_DEBUG "_CONSOLE")
+	set_target_properties(${GAME_TARGET_ANDROID} PROPERTIES LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE")
+	set_target_properties(${GAME_TARGET_ANDROID} PROPERTIES COMPILE_DEFINITIONS_DEBUG "_CONSOLE")
 endif()
 
 #------------------------------------------------------------------------------
@@ -194,34 +244,38 @@ endif()
 
 # Link sanitizers first
 if(SANITIZE)
-	target_link_libraries(${GAME_TARGET} PRIVATE asan ubsan)
+	target_link_libraries(${GAME_TARGET_ANDROID} PRIVATE asan ubsan)
 endif()
 
 # Explicitly link math lib on Linux
-if(NOT APPLE AND NOT WIN32)
-	target_link_libraries(${GAME_TARGET} PRIVATE m)
+if(NOT APPLE AND NOT WIN32 AND NOT ANDROID)
+	target_link_libraries(${GAME_TARGET_ANDROID} PRIVATE m)
 endif()
 
 # Link SDL
 if(NOT SDL_STATIC)
-	target_link_libraries(${GAME_TARGET} PRIVATE SDL3::SDL3)
+	target_link_libraries(${GAME_TARGET_ANDROID} PRIVATE SDL3::SDL3)
 else()
-	target_link_libraries(${GAME_TARGET} PRIVATE SDL3::SDL3-static)
+	target_link_libraries(${GAME_TARGET_ANDROID} PRIVATE SDL3::SDL3-static)
 endif()
 
 # Link core dependencies
-target_link_libraries(${GAME_TARGET} PRIVATE Pomme OpenGL::GL)
+if(ANDROID)
+	target_link_libraries(${GAME_TARGET_ANDROID} PRIVATE Pomme GLESv3 log android)
+else()
+	target_link_libraries(${GAME_TARGET_ANDROID} PRIVATE Pomme OpenGL::GL)
+endif()
 
 # Add required frameworks for KillMacMouseAcceleration
 if(APPLE)
-	target_link_libraries(${GAME_TARGET} PRIVATE "-framework Foundation" "-framework IOKit")
+	target_link_libraries(${GAME_TARGET_ANDROID} PRIVATE "-framework Foundation" "-framework IOKit")
 endif()
 
 #------------------------------------------------------------------------------
 # PLATFORM-SPECIFIC PROPERTIES
 #------------------------------------------------------------------------------
 
-set_target_properties(${GAME_TARGET} PROPERTIES
+set_target_properties(${GAME_TARGET_ANDROID} PROPERTIES
 	#--------------------------------------------------------------------------
 	# MSVC/WIN32
 	#--------------------------------------------------------------------------
@@ -277,6 +331,7 @@ set_target_properties(${GAME_TARGET} PROPERTIES
 # POST-BUILD (COPY ASSETS, ETC.)
 #------------------------------------------------------------------------------
 
+if(NOT ANDROID)
 if(APPLE)
 	set(GAME_DATA_TARGET_LOCATION "$<TARGET_FILE_DIR:${GAME_TARGET}>/../Resources")
 else()
@@ -309,6 +364,7 @@ if(WIN32)
 	# When installing (cmake --install), copy Visual Studio redistributable DLLs to install location
 	include(InstallRequiredSystemLibraries)
 endif()
+endif() # NOT ANDROID
 
 # Copy documentation to output folder
 configure_file(${CMAKE_SOURCE_DIR}/packaging/ReadMe.txt.in ${CMAKE_CURRENT_BINARY_DIR}/ReadMe.txt)

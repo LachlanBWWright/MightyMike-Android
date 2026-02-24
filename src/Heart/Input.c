@@ -20,6 +20,10 @@
 #include "structures.h"
 #include "externs.h"
 
+#ifdef __ANDROID__
+#include "TouchControls.h"
+#endif
+
 /**********************/
 /*     PROTOTYPES     */
 /**********************/
@@ -139,6 +143,16 @@ void UpdateInput(void)
 			mouseWheelDelta += event.wheel.y;
 			mouseWheelDelta += event.wheel.x;
 			break;
+
+#ifdef __ANDROID__
+		case SDL_EVENT_FINGER_DOWN:
+		case SDL_EVENT_FINGER_UP:
+		case SDL_EVENT_FINGER_MOTION:
+			TouchControls_ProcessEvent(event.type,
+				event.tfinger.x, event.tfinger.y,
+				event.tfinger.fingerID);
+			break;
+#endif
 		}
 	}
 
@@ -147,7 +161,13 @@ void UpdateInput(void)
 
 	int numkeys = 0;
 	const bool* keystate = SDL_GetKeyboardState(&numkeys);
+#ifdef __ANDROID__
+	// On Android, SDL synthesizes mouse button events from touch events.
+	// Suppress mouse buttons to avoid unintended attacks on every tap.
+	uint32_t mouseButtons = 0;
+#else
 	uint32_t mouseButtons = SDL_GetMouseState(NULL, NULL);
+#endif
 
 	{
 		int minNumKeys = numkeys < SDL_SCANCODE_COUNT ? numkeys : SDL_SCANCODE_COUNT;
@@ -162,6 +182,17 @@ void UpdateInput(void)
 		{
 			UpdateKeyState(&gRawKeyboardState[i], false);
 		}
+
+#ifdef __ANDROID__
+		// On Android, remap the hardware back button (AC_BACK) to Escape
+		// so that menu navigation (kNeed_UIBack, kNeed_UIPause) works.
+		if (SDL_SCANCODE_AC_BACK < SDL_SCANCODE_COUNT &&
+		    SDL_SCANCODE_ESCAPE < SDL_SCANCODE_COUNT &&
+		    gRawKeyboardState[SDL_SCANCODE_AC_BACK] & KEYSTATE_ACTIVE_BIT)
+		{
+			UpdateKeyState(&gRawKeyboardState[SDL_SCANCODE_ESCAPE], true);
+		}
+#endif
 	}
 
 	// --------------------------------------------
@@ -237,6 +268,18 @@ void UpdateInput(void)
 
 		UpdateKeyState(&gNeedStates[i], downNow);
 	}
+
+#ifdef __ANDROID__
+	// OR in touch control bits for each need
+	for (int i = 0; i < NUM_CONTROL_NEEDS; i++)
+	{
+		if (TouchControls_GetNeedActive(i))
+		{
+			UpdateKeyState(&gNeedStates[i], true);
+		}
+	}
+	TouchControls_PostFrame();
+#endif
 }
 
 void ClearInput(void)

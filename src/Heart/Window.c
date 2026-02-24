@@ -400,7 +400,15 @@ void CleanupDisplay(void)
 #if _DEBUG
 static void SaveIndexedScreenshot(void)
 {
+#ifdef __ANDROID__
+	// /tmp/ does not exist on Android; write to internal storage instead
+	const char* base = SDL_GetAndroidInternalStoragePath();
+	char path[512];
+	SDL_snprintf(path, sizeof(path), "%s/MikeIndexedScreenshot.tga", base ? base : "/sdcard");
+	DumpIndexedTGA(path, VISIBLE_WIDTH, VISIBLE_HEIGHT, (const char*) gIndexedFramebuffer);
+#else
 	DumpIndexedTGA("/tmp/MikeIndexedScreenshot.tga", VISIBLE_WIDTH, VISIBLE_HEIGHT, (const char*) gIndexedFramebuffer);
+#endif
 }
 
 void DumpIndexedTGA(const char* hostPath, int width, int height, const char* data)
@@ -531,6 +539,11 @@ void SetFullscreenMode(bool enforceDisplayPref)
 		SDL_SetWindowFullscreen(gSDLWindow, SDL_WINDOW_FULLSCREEN);
 	}
 #else
+#ifdef __ANDROID__
+	// Android window is always fullscreen; do not attempt to change display or mode.
+	(void) enforceDisplayPref;
+	SDL_SetWindowFullscreen(gSDLWindow, true);
+#else
 	if (gGamePrefs.displayMode == kDisplayMode_Windowed)
 	{
 		SDL_SetWindowFullscreen(gSDLWindow, false);
@@ -568,6 +581,7 @@ void SetFullscreenMode(bool enforceDisplayPref)
 		SDL_ShowCursor();
 	else
 		SDL_HideCursor();
+#endif // __ANDROID__
 #endif
 }
 
@@ -606,6 +620,10 @@ int GetMaxIntegerZoomForPreferredDisplay(void)
 
 void SetOptimalWindowSize(void)
 {
+#ifdef __ANDROID__
+	// Android window is managed by the system; no manual resizing.
+	return;
+#endif
 	SDL_WindowFlags windowFlags = SDL_GetWindowFlags(gSDLWindow);
 	SDL_RestoreWindow(gSDLWindow);
 

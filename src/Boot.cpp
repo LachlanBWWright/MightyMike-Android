@@ -9,6 +9,12 @@
 #include "PommeFiles.h"
 #include "PommeInit.h"
 
+#ifdef __ANDROID__
+#include <stdlib.h>   // for setenv/getenv
+#include <system_error>  // for std::error_code
+#include "AndroidAssets.h"
+#endif
+
 extern "C"
 {
 	#include "externs.h"
@@ -26,6 +32,47 @@ static fs::path FindGameData(const char* executablePath)
 {
 	fs::path dataPath;
 
+#ifdef __ANDROID__
+	(void)executablePath;
+	// On Android: extract assets from APK to internal storage, then point there.
+	// The APK assets have game data files directly at the root (Data/ dir contents)
+	// because build.gradle.kts uses  assets.srcDirs("../../Data").
+	const char* internalPath = SDL_GetPrefPath(GAME_IDENTIFIER, GAME_FULL_NAME);
+	if (!internalPath)
+		throw std::runtime_error("Couldn't get internal storage path.");
+
+	SDL_Log("FindGameData: internal storage = %s", internalPath);
+
+	if (!Android_ExtractAssets(internalPath))
+		throw std::runtime_error("Couldn't extract game assets from APK.");
+
+	SDL_Log("FindGameData: assets extracted");
+
+	dataPath = fs::path(internalPath);
+	SDL_free((void*)internalPath);
+	dataPath = dataPath.lexically_normal();
+	gDataSpec = Pomme::Files::HostPathToFSSpec(dataPath / "System");
+
+	// Open the application resource file so CurResFile() returns a valid ref
+	// and resource lookups (e.g. 'dEmo' in demo mode) work correctly.
+	{
+		auto applicationSpec = Pomme::Files::HostPathToFSSpec(dataPath / "System" / "Application");
+		short resFileRefNum = FSpOpenResFile(&applicationSpec, fsRdPerm);
+		if (resFileRefNum != -1)
+		{
+			UseResFile(resFileRefNum);
+			SDL_Log("FindGameData: Application.rsrc opened (ref %d)", resFileRefNum);
+		}
+		else
+		{
+			SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+				"FindGameData: couldn't open Application.rsrc (might be OK)");
+		}
+	}
+
+	SDL_Log("FindGameData: done, dataPath = %s", dataPath.c_str());
+	return dataPath;
+#else
 	int attemptNum = 0;
 
 #if !(__APPLE__)
@@ -75,6 +122,7 @@ tryAgain:
 	UseResFile(resFileRefNum);
 
 	return dataPath;
+#endif
 }
 
 static void Boot(int argc, char** argv)
@@ -88,9 +136,42 @@ static void Boot(int argc, char** argv)
 	SDL_SetLogPriorities(SDL_LOG_PRIORITY_INFO);
 #endif
 
+#ifdef __ANDROID__
+	// Ensure HOME env var is set so Pomme can find the preferences folder.
+	// On Android, HOME may not be set, causing FindFolder to fail.
+	// Also pre-create $HOME/.config so preference directories can be created.
+	SDL_Log("Boot: setting up Android HOME");
+	if (!getenv("HOME"))
+	{
+		const char* internalPath = SDL_GetAndroidInternalStoragePath();
+		if (internalPath)
+		{
+			setenv("HOME", internalPath, 1);
+			SDL_Log("Boot: HOME set to %s", internalPath);
+		}
+	}
+	{
+		const char* home = getenv("HOME");
+		if (home)
+		{
+			fs::path configDir = fs::path(home) / ".config";
+			std::error_code ec;
+			fs::create_directories(configDir, ec);
+			if (ec)
+				SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+					"Couldn't create prefs dir '%s': %s",
+					configDir.c_str(), ec.message().c_str());
+			else
+				SDL_Log("Boot: created prefs dir %s", configDir.c_str());
+		}
+	}
+#endif
+
+	SDL_Log("Boot: Pomme::Init");
 	// Start our "machine"
 	Pomme::Init();
 
+	SDL_Log("Boot: SDL_Init VIDEO");
 	// Initialize SDL video subsystem
 	if (!SDL_Init(SDL_INIT_VIDEO))
 	{
@@ -98,17 +179,37 @@ static void Boot(int argc, char** argv)
 	}
 
 #if GLRENDER
+#ifdef __ANDROID__
+	// Request OpenGL ES 3.0 for Android
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+#else
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
+#endif
 #endif // GLRENDER
 
 	// Create window
+#ifdef __ANDROID__
+	int windowFlags = SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_FULLSCREEN;
+#else
 	int windowFlags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+#endif
 #if GLRENDER
 	windowFlags |= SDL_WINDOW_OPENGL;
 #endif
+#ifdef __ANDROID__
+	SDL_Log("Boot: creating Android fullscreen window");
+	gSDLWindow = SDL_CreateWindow(GAME_FULL_NAME, 0, 0, windowFlags);
+#else
 	gSDLWindow = SDL_CreateWindow(GAME_FULL_NAME " " GAME_VERSION, VISIBLE_WIDTH, VISIBLE_HEIGHT, windowFlags);
+#endif
 	if (!gSDLWindow)
+	{
+		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Boot: SDL_CreateWindow FAILED: %s", SDL_GetError());
 		throw std::runtime_error("Couldn't create SDL window.");
+	}
+	SDL_Log("Boot: window created");
 
 #if GLRENDER
 	GLRender_Init();
@@ -161,9 +262,10 @@ int main(int argc, char** argv)
 	{
 		// no-op, the game may throw this exception to shut us down cleanly
 	}
-#if !(_DEBUG)
-	// In release builds, catch anything that might be thrown by GameMain
-	// so we can show an error dialog to the user.
+#if !(_DEBUG) || defined(__ANDROID__)
+	// In release builds, and always on Android (where a silent crash shows no
+	// explanation), catch anything that might be thrown by Boot/GameMain so we
+	// can show an error dialog to the user.
 	catch (std::exception& ex)		// Last-resort catch
 	{
 		success = false;

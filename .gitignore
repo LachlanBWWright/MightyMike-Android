@@ -19,3 +19,10 @@ cache/
 # macOS metadata
 .DS_Store
 
+
+# Android build artifacts
+android/app/build/
+android/build/
+android/.gradle/
+android/app/src/main/java/org/libsdl/app/
+android/app/.cxx/
