@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <signal.h>
 #include <unistd.h>
+#include <string.h>
 #endif
 
 extern "C"
@@ -464,6 +465,66 @@ static void Shutdown()
 	SDL_Quit();
 }
 
+#ifdef __ANDROID__
+// ---------------------------------------------------------------------------
+// Crash signal handler — shows a best-effort popup before re-raising.
+// Rules for signal handlers: only async-signal-safe functions may be called.
+// write(2) IS async-signal-safe; SDL_ShowSimpleMessageBox is NOT, but we
+// attempt it anyway because the process is already in a fatal state and the
+// worst outcome (deadlock) is no worse than a silent crash.
+// ---------------------------------------------------------------------------
+
+static volatile sig_atomic_t gInCrashHandler = 0;
+
+// Pre-built per-signal messages with precomputed lengths.
+// Array indices 0-4 map to the if-else chain below (NOT to signal numbers).
+struct { const char* msg; int len; } static const kSigMsgs[] = {
+    /* 0 → SIGSEGV */ { "Native crash: SIGSEGV (null/bad pointer)",  40 },
+    /* 1 → SIGBUS  */ { "Native crash: SIGBUS  (misaligned access)",  41 },
+    /* 2 → SIGFPE  */ { "Native crash: SIGFPE  (arithmetic error)",   40 },
+    /* 3 → SIGILL  */ { "Native crash: SIGILL  (illegal instruction)", 43 },
+    /* 4 → SIGABRT */ { "Native crash: SIGABRT (abort)",               29 },
+};
+
+extern "C" {
+static void AndroidCrashHandler(int sig, siginfo_t* /*info*/, void* /*ctx*/)
+{
+    // Guard against re-entrant calls.
+    if (gInCrashHandler) return;
+    gInCrashHandler = 1;
+
+    // Choose the pre-built message for this signal.
+    // Indices 0-4 correspond to the kSigMsgs table above (NOT to signal numbers).
+    int msgIdx = -1;
+    if      (sig == SIGSEGV) msgIdx = 0;
+    else if (sig == SIGBUS)  msgIdx = 1;
+    else if (sig == SIGFPE)  msgIdx = 2;
+    else if (sig == SIGILL)  msgIdx = 3;
+    else if (sig == SIGABRT) msgIdx = 4;
+
+    const char* msg    = (msgIdx >= 0) ? kSigMsgs[msgIdx].msg : "Native crash: unknown signal";
+    int         msgLen = (msgIdx >= 0) ? kSigMsgs[msgIdx].len : 28;
+
+    // Write to stderr (async-signal-safe; appears in Android logcat).
+    // Use pre-computed length to avoid strlen (not async-signal-safe).
+    write(STDERR_FILENO, msg, (size_t)msgLen);
+    write(STDERR_FILENO, "\n", 1);
+
+    // Best-effort dialog.  Not async-signal-safe, but the process is dying
+    // anyway; a deadlock here is no worse than a silent kill.
+    SDL_ShowSimpleMessageBox(0, GAME_FULL_NAME " crashed", msg, nullptr);
+
+    // Restore the default handler and re-raise so debuggerd writes a tombstone.
+    struct sigaction def = {};
+    def.sa_handler = SIG_DFL;
+    sigemptyset(&def.sa_mask);
+    sigaction(sig, &def, nullptr);
+    raise(sig);
+}
+} // extern "C"
+#endif // __ANDROID__
+
+
 int main(int argc, char** argv)
 {
 	bool success = true;
@@ -488,38 +549,11 @@ int main(int argc, char** argv)
 	});
 
 	// Install signal handlers for fatal native crashes so a popup is shown.
-	// We use a static buffer to avoid heap allocation inside the signal handler.
 	// After showing the dialog we re-raise the original signal so debuggerd can
 	// still write its tombstone.
 	{
-		static volatile sig_atomic_t gInCrashHandler = 0;
-		auto crashHandler = [](int sig, siginfo_t* /*info*/, void* /*ctx*/)
-		{
-			// Guard against re-entrant calls (e.g., SDL itself faulting)
-			if (gInCrashHandler) return;
-			gInCrashHandler = 1;
-
-			static char msg[128];
-			const char* sigName = "signal";
-			if      (sig == SIGSEGV) sigName = "SIGSEGV (null/bad pointer)";
-			else if (sig == SIGBUS)  sigName = "SIGBUS  (misaligned access)";
-			else if (sig == SIGFPE)  sigName = "SIGFPE  (arithmetic error)";
-			else if (sig == SIGILL)  sigName = "SIGILL  (illegal instruction)";
-			else if (sig == SIGABRT) sigName = "SIGABRT (abort)";
-			SDL_snprintf(msg, sizeof(msg), "Native crash: %s", sigName);
-
-			SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "%s", msg);
-			SDL_ShowSimpleMessageBox(0, GAME_FULL_NAME " crashed", msg, nullptr);
-
-			// Restore default handler and re-raise so debuggerd writes a tombstone.
-			struct sigaction def = {};
-			def.sa_handler = SIG_DFL;
-			sigaction(sig, &def, nullptr);
-			raise(sig);
-		};
-
 		struct sigaction sa = {};
-		sa.sa_sigaction = crashHandler;
+		sa.sa_sigaction = AndroidCrashHandler;
 		sa.sa_flags = SA_SIGINFO;
 		sigemptyset(&sa.sa_mask);
 		sigaction(SIGSEGV, &sa, nullptr);

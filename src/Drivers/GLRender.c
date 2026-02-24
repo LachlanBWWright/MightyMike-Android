@@ -81,7 +81,7 @@ static GLuint gQuadVBO = 0;
 static GLuint gQuadIBO = 0;
 // Dedicated overlay VAO/VBO — pre-allocated once, updated with glBufferSubData each frame.
 // Keeping this separate from gQuadVBO prevents repeated glBufferData resizing (game quad
-// is 64 bytes; circles need up to 1 024 bytes).  Repeated resize causes GPU-memory
+// is 64 bytes; circles need up to 1024 bytes).  Repeated resize causes GPU-memory
 // fragmentation on some Android drivers, leading to a SIGSEGV after ~100 frames.
 static GLuint gOverlayVAO = 0;
 static GLuint gOverlayVBO = 0;
