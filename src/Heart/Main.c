@@ -1422,8 +1422,20 @@ void GameMain(void)
 	PlayArea();
 #endif
 
-	DoLegal();
-	DoPangeaLogo();
+	if (gSkipMenus)
+	{
+		// Direct-boot to a specified level: skip all intro screens and menus.
+		gPlayerMode = ONE_PLAYER;
+		StopMusic();
+		InitGame();
+		Do1PlayerGame();
+		// After finishing, fall through to the regular menu loop.
+	}
+	else
+	{
+		DoLegal();
+		DoPangeaLogo();
+	}
 
 loop:
 	CleanMemory();							// clean up memory

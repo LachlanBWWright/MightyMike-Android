@@ -182,6 +182,9 @@ register	unsigned short		tileNum,bits;
 
 //	TLCornerFlag = BLCornerFlag = TRCornerFlag = BRCornerFlag = 0;	// assume no corner hits
 
+	if (gDisableFenceCollision)				// cheat: skip all solid-tile collisions
+		return;
+
 	if (gBottomSide >= gPlayfieldHeight)			// see if bottom is off of map
 		return;
 	if (gTopSide < 0)								// see if top is off of map

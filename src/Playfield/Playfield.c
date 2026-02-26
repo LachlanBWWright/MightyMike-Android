@@ -402,7 +402,22 @@ uint16_t	*tempPtr;
 long	i;
 Ptr		bytePtr,pfPtr;
 
-	gPlayfieldHandle = LoadPackedFile(fileName);					// load the file
+	// If a custom map override path is set, use it instead of the built-in
+	// map file.  The path follows the same convention as other game data
+	// files (relative to the Data/System directory, using ':' separators,
+	// e.g. ":Maps:custom.map-1").
+	if (gCustomMapPath[0] != '\0')
+	{
+		SDL_Log("LoadPlayfield: using custom map override: %s", gCustomMapPath);
+		gPlayfieldHandle = LoadPackedFile(gCustomMapPath);
+		// Clear the override so it is only applied once; if the player moves
+		// to a new area the engine loads the normal built-in map again.
+		gCustomMapPath[0] = '\0';
+	}
+	else
+	{
+		gPlayfieldHandle = LoadPackedFile(fileName);				// load the file
+	}
 
 	pfPtr = *gPlayfieldHandle;										// get fixed ptr
 
