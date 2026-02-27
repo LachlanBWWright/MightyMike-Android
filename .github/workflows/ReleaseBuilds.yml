@@ -117,7 +117,15 @@ jobs:
 
       - name: Get SDL version for cache key
         id: sdlver
-        run: echo "SDL_VER=$(python3 -c "exec(open('build.py').read().split('if __name__')[0]); print(sdl_ver)")" >> $GITHUB_OUTPUT
+        run: |
+          SDL_VER=$(python3 -c "
+          import re
+          with open('build.py') as f:
+              txt = f.read()
+          m = re.search(r'sdl_ver\s*=\s*\"([^\"]+)\"', txt)
+          print(m.group(1) if m else '0.0.0')
+          ")
+          echo "SDL_VER=$SDL_VER" >> $GITHUB_OUTPUT
 
       - name: Cache SDL3 Emscripten build
         id: cache-sdl3-wasm
