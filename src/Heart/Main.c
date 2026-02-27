@@ -1425,17 +1425,15 @@ void GameMain(void)
 	if (gSkipMenus)
 	{
 		// Direct-boot to a specified level: skip all intro screens and menus.
-		// Save the requested scene and area before InitGame() resets gStartingArea.
-		Byte savedScene = gStartingScene;
-		Byte savedArea  = gStartingArea;
+		// Save the requested area before InitGame() resets gStartingArea to 0.
+		Byte savedArea = gStartingArea;
 		gPlayerMode = ONE_PLAYER;
 		StopMusic();
 		InitGame();
-		// Restore the requested starting position (InitGame resets gStartingArea to 0).
-		gStartingScene = savedScene;
-		gStartingArea  = savedArea;
-		gPlayerSaveData[0].scene = savedScene;
-		gPlayerSaveData[0].area  = savedArea;
+		// Restore the requested starting area (InitGame always resets gStartingArea to 0).
+		gStartingArea                = savedArea;
+		gPlayerSaveData[0].area      = savedArea;
+		gPlayerSaveData[0].scene     = gStartingScene;
 		Do1PlayerGame();
 		// After finishing, fall through to the regular menu loop.
 	}
