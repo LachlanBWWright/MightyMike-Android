@@ -88,6 +88,12 @@ extern	Boolean					gIsInGame;
 extern	struct SDL_Window		*gSDLWindow;
 extern	FSSpec					gDataSpec;
 extern	int						gNumThreads;
+extern	Boolean					gSkipMenus;
+extern	char					gCustomMapPath[512];
+
+#pragma mark - WebCheat
+
+extern	Boolean					gDisableFenceCollision;
 
 #pragma mark - MyGuy
 

@@ -95,7 +95,10 @@ endif()
 
 add_subdirectory(extern/Pomme)
 
-find_package(OpenGL REQUIRED)  # only actually required if we want to force GLRENDER
+# OpenGL is not available under Emscripten; it uses WebGL through OpenGL ES.
+if(NOT EMSCRIPTEN)
+	find_package(OpenGL REQUIRED)  # only actually required if we want to force GLRENDER
+endif()
 
 #------------------------------------------------------------------------------
 # EXECUTABLE TARGET
@@ -129,7 +132,8 @@ target_include_directories(${GAME_TARGET} PRIVATE ${GAME_SRCDIR}/Headers)
 
 add_compile_definitions(
 	"$<$<CONFIG:DEBUG>:_DEBUG>"
-	GLRENDER    # Mighty Mike only (comment out to use SDL's 2D renderer)
+	# On Emscripten we use the SDL 2D renderer (WebGL) instead of desktop OpenGL.
+	"$<$<NOT:$<BOOL:${EMSCRIPTEN}>>:GLRENDER>"
 	#NOVSYNC    # Mighty Mike only
 )
 
@@ -203,18 +207,63 @@ if(NOT APPLE AND NOT WIN32)
 endif()
 
 # Link SDL
-if(NOT SDL_STATIC)
+if(EMSCRIPTEN)
+	# Emscripten builds always use the static SDL3 library
+	target_link_libraries(${GAME_TARGET} PRIVATE SDL3::SDL3-static)
+elseif(NOT SDL_STATIC)
 	target_link_libraries(${GAME_TARGET} PRIVATE SDL3::SDL3)
 else()
 	target_link_libraries(${GAME_TARGET} PRIVATE SDL3::SDL3-static)
 endif()
 
 # Link core dependencies
-target_link_libraries(${GAME_TARGET} PRIVATE Pomme OpenGL::GL)
+if(EMSCRIPTEN)
+	# Emscripten provides its own OpenGL ES / WebGL layer; no system GL needed.
+	target_link_libraries(${GAME_TARGET} PRIVATE Pomme)
+else()
+	target_link_libraries(${GAME_TARGET} PRIVATE Pomme OpenGL::GL)
+endif()
 
 # Add required frameworks for KillMacMouseAcceleration
 if(APPLE)
 	target_link_libraries(${GAME_TARGET} PRIVATE "-framework Foundation" "-framework IOKit")
+endif()
+
+#------------------------------------------------------------------------------
+# EMSCRIPTEN-SPECIFIC SETTINGS
+#------------------------------------------------------------------------------
+
+if(EMSCRIPTEN)
+	# Output .js + .wasm
+	set_target_properties(${GAME_TARGET} PROPERTIES SUFFIX ".js")
+
+	# Force single-threaded rendering: Emscripten thread support requires
+	# serving with COOP/COEP headers; we avoid that complexity here by
+	# clamping the render thread count to 1 at compile time.
+	target_compile_definitions(${GAME_TARGET} PRIVATE EMSCRIPTEN_SINGLE_THREAD=1)
+
+	# Emscripten link flags:
+	#   ALLOW_MEMORY_GROWTH  – let the heap grow as needed
+	#   ASYNCIFY             – allows blocking C loops to yield back to the browser's
+	#                          event loop; required because the game uses tight
+	#                          while/do-while loops with SDL_Delay() instead of a
+	#                          callback-based main loop
+	#   EXPORTED_RUNTIME_METHODS / EXPORTED_FUNCTIONS – expose ccall/cwrap and
+	#     our cheat/boot helpers to JavaScript
+	#   --embed-file – pack the game's Data folder into the wasm binary
+	target_link_options(${GAME_TARGET} PRIVATE
+		-sALLOW_MEMORY_GROWTH=1
+		-sMAXIMUM_MEMORY=512mb
+		-sASYNCIFY=1
+		"-sASYNCIFY_IMPORTS=['SDL_Delay','emscripten_sleep']"
+		"-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap']"
+		"-sEXPORTED_FUNCTIONS=['_main','_Boot_SetDirectLevel','_Boot_SetCustomMapPath','_Cheat_SetFenceCollision','_Cheat_GetFenceCollision']"
+		"--embed-file=${GAME_DATADIR}@/Data"
+		-sWASM=1
+		-sUSE_WEBGL2=1
+		-sMIN_WEBGL_VERSION=2
+		-sGL_ENABLE_GET_PROC_ADDRESS=1
+	)
 endif()
 
 #------------------------------------------------------------------------------

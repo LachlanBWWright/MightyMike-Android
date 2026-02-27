@@ -1422,8 +1422,26 @@ void GameMain(void)
 	PlayArea();
 #endif
 
-	DoLegal();
-	DoPangeaLogo();
+	if (gSkipMenus)
+	{
+		// Direct-boot to a specified level: skip all intro screens and menus.
+		// Save the requested area before InitGame() resets gStartingArea to 0.
+		Byte savedArea = gStartingArea;
+		gPlayerMode = ONE_PLAYER;
+		StopMusic();
+		InitGame();
+		// Restore the requested starting area (InitGame always resets gStartingArea to 0).
+		gStartingArea                = savedArea;
+		gPlayerSaveData[0].area      = savedArea;
+		gPlayerSaveData[0].scene     = gStartingScene;
+		Do1PlayerGame();
+		// After finishing, fall through to the regular menu loop.
+	}
+	else
+	{
+		DoLegal();
+		DoPangeaLogo();
+	}
 
 loop:
 	CleanMemory();							// clean up memory

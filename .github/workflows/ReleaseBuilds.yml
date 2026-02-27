@@ -1,6 +1,16 @@
 name: Make Release Builds
 
-on: [workflow_dispatch]
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
 
 jobs:
   build-linux-appimage:
@@ -86,3 +96,120 @@ jobs:
           name: ${{env.ARTIFACT_NAME}}
           path: dist/
           compression-level: 0
+
+  build-wasm:
+    name: Build WebAssembly
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with: {submodules: 'recursive'}
+
+      - name: Install Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+
+      - name: Install CMake & Ninja
+        run: |
+          sudo apt update
+          sudo apt install -y cmake ninja-build
+
+      - name: Get SDL version for cache key
+        id: sdlver
+        run: |
+          SDL_VER=$(python3 -c "
+          import re
+          with open('build.py') as f:
+              txt = f.read()
+          m = re.search(r'sdl_ver\s*=\s*\"([^\"]+)\"', txt)
+          print(m.group(1) if m else '0.0.0')
+          ")
+          echo "SDL_VER=$SDL_VER" >> $GITHUB_OUTPUT
+
+      - name: Cache SDL3 Emscripten build
+        id: cache-sdl3-wasm
+        uses: actions/cache@v4
+        with:
+          path: extern/SDL3-${{ steps.sdlver.outputs.SDL_VER }}-wasm-src/install
+          key: sdl3-${{ steps.sdlver.outputs.SDL_VER }}-emscripten-${{ runner.os }}
+
+      - name: Get WASM artifact name
+        run: echo "ARTIFACT_NAME=$(python3 build.py --wasm --print-artifact-name)" >> $GITHUB_ENV
+
+      - name: Build WebAssembly
+        run: python3 build.py --wasm --dependencies --configure --build --package
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{env.ARTIFACT_NAME}}
+          path: dist/
+          compression-level: 0
+
+      # ── Prepare GitHub Pages deployment ──────────────────────────────────
+      - name: Prepare Pages artifact
+        run: |
+          mkdir -p pages-deploy
+          # Copy the landing page
+          cp docs/index.html pages-deploy/
+          # Unzip the WASM bundle into the pages deployment directory
+          unzip -o dist/$ARTIFACT_NAME -d pages-deploy-tmp
+          # The zip contains a sub-folder; flatten it one level
+          find pages-deploy-tmp -maxdepth 2 \( -name "*.js" -o -name "*.wasm" \) \
+            -exec cp {} pages-deploy/ \;
+          rm -rf pages-deploy-tmp
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: pages-deploy
+
+  # ── Deploy GitHub Pages ───────────────────────────────────────────────────
+  deploy-pages:
+    name: Deploy to GitHub Pages
+    needs: build-wasm
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  # ── Create / update GitHub Release with all build artifacts ──────────────
+  release:
+    name: Create GitHub Release
+    if: github.event_name == 'push'
+    needs:
+      - build-linux-appimage
+      - build-windows
+      - build-wasm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {sparse-checkout: 'CMakeLists.txt', sparse-checkout-cone-mode: false}
+
+      - uses: actions/download-artifact@v4.1.3
+        with:
+          path: artifacts/
+          merge-multiple: true
+
+      - name: Get game version from CMakeLists.txt
+        id: version
+        run: |
+          VER=$(grep -m1 'GAME_VERSION' CMakeLists.txt | sed 's/.*"\(.*\)".*/\1/')
+          echo "GAME_VER=$VER" >> $GITHUB_OUTPUT
+          # Sanitize ref_name for use in a git tag (replace '/' with '-')
+          SAFE_REF=$(echo "${{ github.ref_name }}" | tr '/' '-')
+          echo "SAFE_REF=$SAFE_REF" >> $GITHUB_OUTPUT
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name == 'main' && format('v{0}', steps.version.outputs.GAME_VER) || format('v{0}-{1}', steps.version.outputs.GAME_VER, steps.version.outputs.SAFE_REF) }}
+          name: "Mighty Mike ${{ steps.version.outputs.GAME_VER }} (${{ github.ref_name }})"
+          draft: false
+          prerelease: ${{ github.ref_name != 'main' }}
+          files: artifacts/*
+

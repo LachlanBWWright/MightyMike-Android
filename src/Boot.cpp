@@ -9,6 +9,10 @@
 #include "PommeFiles.h"
 #include "PommeInit.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+#endif
+
 extern "C"
 {
 	#include "externs.h"
@@ -19,6 +23,10 @@ extern "C"
 	SDL_Window* gSDLWindow = nullptr;
 	FSSpec gDataSpec;
 
+	// WebAssembly / level-editor direct-boot parameters
+	Boolean gSkipMenus = false;
+	char gCustomMapPath[512] = "";	// if set, overrides the map file for the current area
+
 	void GameMain(void);
 }
 
@@ -28,7 +36,11 @@ static fs::path FindGameData(const char* executablePath)
 
 	int attemptNum = 0;
 
-#if !(__APPLE__)
+#if defined(__EMSCRIPTEN__)
+	// In WebAssembly builds the Data folder is embedded into the WASM binary
+	// at the path /Data (via --embed-file during the Emscripten link step).
+	attemptNum = 2;
+#elif !(__APPLE__)
 	attemptNum++;		// skip macOS special case #0
 #endif
 
@@ -86,6 +98,68 @@ static void Boot(int argc, char** argv)
 	SDL_SetLogPriorities(SDL_LOG_PRIORITY_VERBOSE);
 #else
 	SDL_SetLogPriorities(SDL_LOG_PRIORITY_INFO);
+#endif
+
+	// Parse command-line arguments (skip argv[0])
+	for (int i = 1; i < argc; i++)
+	{
+		if (SDL_strcmp(argv[i], "--level") == 0 && i + 1 < argc)
+		{
+			i++;
+			int scene = 0, area = 0;
+			if (SDL_sscanf(argv[i], "%d:%d", &scene, &area) == 2)
+			{
+				gStartingScene = (Byte)scene;
+				gStartingArea  = (Byte)area;
+				gSkipMenus     = true;
+				SDL_Log("Direct boot: scene=%d area=%d", scene, area);
+			}
+			else
+			{
+				SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+					"--level expects <scene>:<area> (e.g. --level 0:1)");
+			}
+		}
+		else if (SDL_strcmp(argv[i], "--map-override") == 0 && i + 1 < argc)
+		{
+			i++;
+			SDL_strlcpy(gCustomMapPath, argv[i], sizeof(gCustomMapPath));
+			SDL_Log("Custom map override: %s", gCustomMapPath);
+		}
+	}
+
+#ifdef __EMSCRIPTEN__
+	// In WebAssembly builds, also check URL query parameters via JavaScript.
+	// We read them directly in EM_ASM and write to C globals via setValue().
+	EM_ASM({
+		var params = new URLSearchParams(window.location.search);
+		var level  = params.get('level');
+		var mapOvr = params.get('mapOverride');
+		if (level) {
+			var parts = level.split(':');
+			if (parts.length === 2) {
+				var scene = parseInt(parts[0]);
+				var area  = parseInt(parts[1]);
+				if (!isNaN(scene) && !isNaN(area)) {
+					setValue($0, scene, 'i8');    // gStartingScene
+					setValue($1, area,  'i8');    // gStartingArea
+					setValue($2, 1,     'i8');    // gSkipMenus (1 = true; Emscripten setValue uses numeric i8)
+				}
+			}
+		}
+		if (mapOvr) {
+			// Write the string into gCustomMapPath (max 511 chars + null)
+			var encoded = new TextEncoder().encode(mapOvr.substring(0, 511));
+			var heap    = new Uint8Array(Module.HEAPU8.buffer, $3, 512);
+			heap.set(encoded);
+			heap[encoded.length] = 0;
+		}
+	},
+		&gStartingScene,
+		&gStartingArea,
+		&gSkipMenus,
+		gCustomMapPath
+	);
 #endif
 
 	// Start our "machine"
@@ -146,6 +220,31 @@ static void Shutdown()
 
 	SDL_Quit();
 }
+
+// ---------------------------------------------------------------------------
+// Helpers exposed to JavaScript in WebAssembly builds
+// ---------------------------------------------------------------------------
+
+#ifdef __EMSCRIPTEN__
+extern "C"
+{
+	// Called from JS (via EM_ASM/ccall) to set a direct-boot level
+	EMSCRIPTEN_KEEPALIVE void Boot_SetDirectLevel(int scene, int area)
+	{
+		gStartingScene = (Byte)scene;
+		gStartingArea  = (Byte)area;
+		gSkipMenus     = true;
+	}
+
+	// Called from JS to set a custom map file path
+	EMSCRIPTEN_KEEPALIVE void Boot_SetCustomMapPath(const char* path)
+	{
+		SDL_strlcpy(gCustomMapPath, path, sizeof(gCustomMapPath));
+	}
+}
+#endif // __EMSCRIPTEN__
+
+// ---------------------------------------------------------------------------
 
 int main(int argc, char** argv)
 {

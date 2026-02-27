@@ -6,6 +6,8 @@ It was initially published in 1995 under the name **Power Pete**.
 
 **Download the game for macOS, Windows or Linux here:** https://github.com/jorio/MightyMike/releases
 
+**Play in your browser (WebAssembly):** See the [GitHub Pages site](https://lachlanBWWright.github.io/MightyMike-Android/) for the WASM build, or [build it yourself](BUILD.md#how-to-build-the-webassembly-version).
+
 ![Screenshot](docs/screenshot.png)
 
 ## About this update
@@ -19,7 +21,7 @@ It does bring a few enhancements, such as:
 
 ## Documentation
 
-- [BUILD.md](BUILD.md) — How to build on macOS, Windows or Linux.
+- [BUILD.md](BUILD.md) — How to build on macOS, Windows, Linux, or as WebAssembly.
 - [CHANGELOG.md](CHANGELOG.md) — Mighty Mike version history.
 - [LICENSE.md](LICENSE.md) — Licensing information (see also below).
 - [Instructions.pdf](docs/Instructions.pdf) — Mighty Mike 2.0 instruction manual.
