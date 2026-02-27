@@ -12,6 +12,76 @@ python3 build.py
 
 If you want to build the game **manually** instead, the rest of this document describes how to do just that on each of the big 3 desktop operating systems.
 
+## How to build the WebAssembly version
+
+The WebAssembly (WASM) build lets you run Mighty Mike in a browser. It is primarily intended for level-editor integration and testing.
+
+### Prerequisites
+
+- [Emscripten SDK (emsdk)](https://emscripten.org/docs/getting_started/downloads.html) — install the **latest stable** release
+- Python 3, CMake
+
+### Building with build.py
+
+```bash
+# Activate the Emscripten toolchain (run once per shell session)
+source /path/to/emsdk_env.sh
+
+# Download SDL3 for Emscripten, configure, build, and package
+python3 build.py --wasm --dependencies --configure --build --package
+```
+
+The packaged `.zip` file (e.g. `dist/MightyMike-3.0.3-wasm.zip`) contains:
+- `MightyMike.js` — the JavaScript loader
+- `MightyMike.wasm` — the WebAssembly binary (with game data embedded)
+
+Serve those files alongside `docs/index.html` from a static web server to play in the browser.
+
+### Level-editor URL parameters
+
+When hosted on a web server, you can pass these query string parameters:
+
+| Parameter | Example | Description |
+|-----------|---------|-------------|
+| `level` | `?level=0:1` | Skip menus and boot directly to scene 0, area 1 (both 0-indexed) |
+| `mapOverride` | `?mapOverride=:Maps:custom.map-1` | Use a custom packed map file instead of the built-in one |
+
+### JavaScript cheat interface
+
+The WASM build exposes these functions to JavaScript via `Module.ccall`:
+
+```js
+// Disable solid-tile (fence) collisions — useful for level editing
+Module.ccall('Cheat_SetFenceCollision', null, ['number'], [0]);  // disable
+Module.ccall('Cheat_SetFenceCollision', null, ['number'], [1]);  // re-enable
+
+// Query current state (returns 1 = enabled, 0 = disabled)
+var enabled = Module.ccall('Cheat_GetFenceCollision', 'number', [], []);
+```
+
+### Building manually with emcmake/emmake
+
+```bash
+source /path/to/emsdk_env.sh
+
+# Build SDL3 for Emscripten first (one-time step)
+mkdir -p libs/SDL3-build && cd libs/SDL3-build
+emcmake cmake ../../extern/SDL -DCMAKE_BUILD_TYPE=Release -DSDL_SHARED=OFF
+emmake make -j$(nproc)
+cmake --install . --prefix ../../libs/SDL3-install
+
+# Configure and build the game
+cd /path/to/MightyMike
+emcmake cmake -S . -B build-wasm \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DSDL3_DIR=libs/SDL3-install/lib/cmake/SDL3
+emmake cmake --build build-wasm -j$(nproc)
+```
+
+The output files (`MightyMike.js`, `MightyMike.wasm`) appear in `build-wasm/`.
+
+---
+
 ## How to build the game manually on macOS
 
 1. Install the prerequisites:
@@ -73,4 +143,11 @@ If you want to build the game **manually** instead, the rest of this document de
     ```
     If you'd like to enable runtime sanitizers, append `-DSANITIZE=1` to the **first** `cmake` call above.
 1. The game gets built in `build/MightyMike`. Enjoy!
+
+## Command-line arguments (all platforms)
+
+| Argument | Example | Description |
+|----------|---------|-------------|
+| `--level <scene>:<area>` | `--level 0:2` | Boot directly to scene 0, area 2 (skips all menus) |
+| `--map-override <path>` | `--map-override :Maps:custom.map-1` | Override the map file for the next loaded area |
 
