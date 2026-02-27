@@ -181,11 +181,14 @@ jobs:
         run: |
           VER=$(grep -m1 'GAME_VERSION' CMakeLists.txt | sed 's/.*"\(.*\)".*/\1/')
           echo "GAME_VER=$VER" >> $GITHUB_OUTPUT
+          # Sanitize ref_name for use in a git tag (replace '/' with '-')
+          SAFE_REF=$(echo "${{ github.ref_name }}" | tr '/' '-')
+          echo "SAFE_REF=$SAFE_REF" >> $GITHUB_OUTPUT
 
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name == 'main' && format('v{0}', steps.version.outputs.GAME_VER) || format('v{0}-{1}', steps.version.outputs.GAME_VER, github.ref_name) }}
+          tag_name: ${{ github.ref_name == 'main' && format('v{0}', steps.version.outputs.GAME_VER) || format('v{0}-{1}', steps.version.outputs.GAME_VER, steps.version.outputs.SAFE_REF) }}
           name: "Mighty Mike ${{ steps.version.outputs.GAME_VER }} (${{ github.ref_name }})"
           draft: false
           prerelease: ${{ github.ref_name != 'main' }}
