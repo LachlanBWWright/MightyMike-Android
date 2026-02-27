@@ -530,7 +530,13 @@ if __name__ == "__main__":
     # Set up project metadata
 
     if args.wasm:
-        project = EmscriptenProject(build_dir)
+        # When building for WASM, default to "build-wasm/" so the WASM output
+        # doesn't clobber the native build directory.  The user can override
+        # by passing -B explicitly (note: build_dir is already absolute at
+        # this point because it was re-assigned from args.build_dir above).
+        default_native_build = os.path.abspath(root_dir + "/build")
+        wasm_dir = build_dir if build_dir != default_native_build else os.path.abspath(root_dir + "/build-wasm")
+        project = EmscriptenProject(wasm_dir)
     elif SYSTEM == "Windows":
         project = WindowsProject(build_dir)
 
