@@ -115,6 +115,17 @@ jobs:
           sudo apt update
           sudo apt install -y cmake ninja-build
 
+      - name: Get SDL version for cache key
+        id: sdlver
+        run: echo "SDL_VER=$(python3 -c "exec(open('build.py').read().split('if __name__')[0]); print(sdl_ver)")" >> $GITHUB_OUTPUT
+
+      - name: Cache SDL3 Emscripten build
+        id: cache-sdl3-wasm
+        uses: actions/cache@v4
+        with:
+          path: extern/SDL3-${{ steps.sdlver.outputs.SDL_VER }}-wasm-src/install
+          key: sdl3-${{ steps.sdlver.outputs.SDL_VER }}-emscripten-${{ runner.os }}
+
       - name: Get WASM artifact name
         run: echo "ARTIFACT_NAME=$(python3 build.py --wasm --print-artifact-name)" >> $GITHUB_ENV
 
