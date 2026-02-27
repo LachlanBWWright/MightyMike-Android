@@ -7,6 +7,10 @@
 #include "renderdrivers.h"
 #include "framebufferfilter.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+#endif
+
 #if _DEBUG
 #define CHECK_SDL_ERROR(success)										\
 	do {					 											\
@@ -141,6 +145,13 @@ void SDLRender_PresentFramebuffer(void)
 	success = SDL_RenderTexture(gSDLRenderer, gSDLTexture, NULL, NULL);
 	CHECK_SDL_ERROR(success);
 	SDL_RenderPresent(gSDLRenderer);
+
+#ifdef __EMSCRIPTEN__
+	// Yield control to the browser so it can update the canvas and
+	// process input events.  emscripten_sleep(0) suspends the C stack
+	// via Asyncify without a real delay.
+	emscripten_sleep(0);
+#endif
 }
 
 #endif

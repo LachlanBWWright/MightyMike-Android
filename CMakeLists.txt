@@ -244,12 +244,18 @@ if(EMSCRIPTEN)
 
 	# Emscripten link flags:
 	#   ALLOW_MEMORY_GROWTH  – let the heap grow as needed
+	#   ASYNCIFY             – allows blocking C loops to yield back to the browser's
+	#                          event loop; required because the game uses tight
+	#                          while/do-while loops with SDL_Delay() instead of a
+	#                          callback-based main loop
 	#   EXPORTED_RUNTIME_METHODS / EXPORTED_FUNCTIONS – expose ccall/cwrap and
 	#     our cheat/boot helpers to JavaScript
 	#   --embed-file – pack the game's Data folder into the wasm binary
 	target_link_options(${GAME_TARGET} PRIVATE
 		-sALLOW_MEMORY_GROWTH=1
 		-sMAXIMUM_MEMORY=512mb
+		-sASYNCIFY=1
+		"-sASYNCIFY_IMPORTS=['SDL_Delay','SDL_WaitEvent','emscripten_sleep']"
 		"-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap']"
 		"-sEXPORTED_FUNCTIONS=['_main','_Boot_SetDirectLevel','_Boot_SetCustomMapPath','_Cheat_SetFenceCollision','_Cheat_GetFenceCollision']"
 		"--embed-file=${GAME_DATADIR}@/Data"
