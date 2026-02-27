@@ -255,7 +255,7 @@ if(EMSCRIPTEN)
 		-sALLOW_MEMORY_GROWTH=1
 		-sMAXIMUM_MEMORY=512mb
 		-sASYNCIFY=1
-		"-sASYNCIFY_IMPORTS=['SDL_Delay','SDL_WaitEvent','emscripten_sleep']"
+		"-sASYNCIFY_IMPORTS=['SDL_Delay','emscripten_sleep']"
 		"-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap']"
 		"-sEXPORTED_FUNCTIONS=['_main','_Boot_SetDirectLevel','_Boot_SetCustomMapPath','_Cheat_SetFenceCollision','_Cheat_GetFenceCollision']"
 		"--embed-file=${GAME_DATADIR}@/Data"
