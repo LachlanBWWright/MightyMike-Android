@@ -1,0 +1,136 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+  workflow_dispatch:
+
+# Required for OIDC-based Pages deployment
+permissions:
+  contents: read
+  pages:    write
+  id-token: write
+
+# Serialise deployments; allow parallel non-deploy runs on other branches
+concurrency:
+  group: "pages-${{ github.ref }}"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+        with: {submodules: 'recursive'}
+
+      # Configure the GitHub Pages environment (sets base URL etc.)
+      - name: Setup Pages
+        if: github.ref == 'refs/heads/main'
+        uses: actions/configure-pages@v5
+
+      # Install Emscripten SDK via git clone to avoid emsdk-update network failures.
+      # The mymindstorm/setup-emsdk action always calls 'emsdk update' on cache miss
+      # (due to a bug in the action's implementation where update:"false" is a truthy
+      # string), and that download can fail with network errors.
+      - name: Cache Emscripten SDK
+        id: cache-emsdk
+        uses: actions/cache@v4
+        with:
+          path: .emsdk
+          key: emsdk-${{ runner.os }}-${{ runner.arch }}-v1
+          restore-keys: emsdk-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install Emscripten
+        run: |
+          if [ ! -f .emsdk/emsdk ]; then
+            git clone --depth=1 https://github.com/emscripten-core/emsdk.git .emsdk
+            .emsdk/emsdk install latest
+          fi
+          .emsdk/emsdk activate latest
+          source .emsdk/emsdk_env.sh
+          echo "EMSDK=$EMSDK" >> "$GITHUB_ENV"
+          echo "EM_CONFIG=$EM_CONFIG" >> "$GITHUB_ENV"
+          echo "EM_CACHE=$EM_CACHE" >> "$GITHUB_ENV"
+          echo "$EMSDK" >> "$GITHUB_PATH"
+          echo "$EMSDK/upstream/emscripten" >> "$GITHUB_PATH"
+          echo "$EMSDK/upstream/bin" >> "$GITHUB_PATH"
+          for d in "$EMSDK/node/"*/bin; do [ -d "$d" ] && echo "$d" >> "$GITHUB_PATH"; done
+
+      # SDL3 is compiled as part of the WASM build; cache it to save time per run
+      - name: Get SDL version for cache key
+        id: sdlver
+        run: |
+          SDL_VER=$(python3 -c "
+          import re
+          with open('build.py') as f:
+              txt = f.read()
+          m = re.search(r'sdl_ver\s*=\s*\"([^\"]+)\"', txt)
+          print(m.group(1) if m else '0.0.0')
+          ")
+          echo "SDL_VER=$SDL_VER" >> $GITHUB_OUTPUT
+
+      - name: Cache SDL3 Emscripten build
+        uses: actions/cache@v4
+        with:
+          path: extern/SDL3-${{ steps.sdlver.outputs.SDL_VER }}-wasm-src/install
+          key: sdl3-wasm-${{ steps.sdlver.outputs.SDL_VER }}-${{ runner.arch }}
+
+      # Build WebAssembly with Emscripten
+      - name: Download SDL3 source
+        run: python3 build.py --wasm --dependencies
+
+      - name: Configure WASM build
+        run: python3 build.py --wasm --configure
+
+      - name: Build WASM
+        run: python3 build.py --wasm --build
+
+      # Assemble the GitHub Pages site in _site/ (main branch only)
+      - name: Assemble site
+        if: github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p _site
+
+          # Copy static assets from docs/ (screenshots, PDFs, images, etc.)
+          for f in docs/*; do
+            cp -r "$f" _site/ 2>/dev/null || true
+          done
+
+          # The docs/index.html becomes the site landing page
+          # (it references MightyMike.js which we copy from the build below)
+
+          # WASM build output
+          cp build-wasm/MightyMike.js   _site/MightyMike.js
+          cp build-wasm/MightyMike.wasm _site/MightyMike.wasm
+
+          # The .data file (preloaded game assets) may exist if using --preload-file;
+          # with --embed-file it is inlined into the .wasm binary.
+          [ -f build-wasm/MightyMike.data ] && cp build-wasm/MightyMike.data _site/MightyMike.data || true
+
+          # Prevent Jekyll from processing our static site files
+          touch _site/.nojekyll
+
+          echo "Site contents:"
+          ls -lh _site/
+
+      - name: Upload Pages artifact
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site/
+
+  # Deploy to GitHub Pages — only runs on main to avoid environment
+  # protection conflicts on non-main branches.
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-22.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

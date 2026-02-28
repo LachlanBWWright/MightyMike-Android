@@ -1,241 +1,483 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Mighty Mike – WebAssembly</title>
   <style>
+    :root {
+      --accent: #f7c34f;
+      --bg:     #0f0f07;
+      --panel:  #1a1a10;
+      --border: #2e2e1e;
+      --text:   #e8e8d8;
+      --dim:    #8a8a6a;
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      background: #111;
-      color: #eee;
-      font-family: system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, sans-serif;
+      line-height: 1.5;
+    }
+
+    /* ── Header ──────────────────────────────────────────── */
+    #header {
+      text-align: center;
+      padding: 1.25rem 1rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+    #header h1 {
+      font-size: 2rem;
+      color: var(--accent);
+      letter-spacing: 3px;
+      text-transform: uppercase;
+    }
+    #header p { color: var(--dim); font-size: 0.85rem; margin-top: 0.25rem; }
+
+    /* ── Game area ───────────────────────────────────────── */
+    #game-wrap {
       display: flex;
       flex-direction: column;
       align-items: center;
-      min-height: 100vh;
+      padding: 1rem;
+      position: relative;       /* stacking context for loading overlay */
     }
 
-    header {
-      padding: 1rem 2rem;
+    /* Loading card — overlays the canvas until game starts.
+       Canvas stays visible with real dimensions so SDL3 can read its
+       CSS size when creating the window (SDL3 will create a 0×0 surface
+       if the canvas is hidden via display:none or height:0). */
+    #loading-card {
+      position: absolute;
+      top: 1rem;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;              /* above canvas */
+      width: 100%;
+      max-width: 800px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 2rem 1.5rem;
       text-align: center;
     }
-
-    header h1 { font-size: 2rem; }
-    header p  { color: #aaa; margin-top: .25rem; }
-
-    #game-container {
-      position: relative;
-      width: 640px;
-      max-width: 100vw;
-    }
-
-    #canvas {
-      display: block;
+    #loading-card img {
+      max-width: 280px;
       width: 100%;
+      margin-bottom: 1.25rem;
+    }
+    #status-text {
+      font-size: 1.05rem;
+      color: var(--accent);
+      min-height: 1.6rem;
+    }
+    #progress-bar {
+      width: 100%;
+      max-width: 420px;
+      height: 6px;
+      margin: 0.75rem auto 0.35rem;
+      accent-color: var(--accent);
+    }
+    #progress-label { font-size: 0.78rem; color: var(--dim); }
+
+    /* Canvas — always in the DOM with proper dimensions for SDL3 */
+    #canvas {
+      max-width: 100%;
+      border-radius: 6px;
+      outline: none;
       background: #000;
     }
 
-    /* "Click to start" overlay – hides once the user interacts */
-    #start-overlay {
-      position: absolute;
-      inset: 0;
-      background: rgba(0,0,0,.75);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
+    /* Toolbar below canvas */
+    #toolbar {
+      display: none;
+      gap: 0.5rem;
+      padding: 0.5rem 0;
+      flex-wrap: wrap;
       justify-content: center;
+    }
+
+    /* ── Generic button ──────────────────────────────────── */
+    .btn {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.35rem 0.8rem;
+      border-radius: 5px;
       cursor: pointer;
-      font-size: 1.5rem;
-      gap: 1rem;
+      font-size: 0.88rem;
+      transition: background 0.12s, border-color 0.12s;
     }
-    #start-overlay.hidden { display: none; }
+    .btn:hover  { background: #2a2a1a; border-color: var(--accent); }
+    .btn.on     { background: #2a2a0d; border-color: var(--accent); color: var(--accent); }
+    .btn.danger { border-color: #c04040; color: #e06060; }
+    .btn.danger:hover { background: #2a0d0d; }
 
-    #status {
-      padding: .5rem 1rem;
-      font-size: .85rem;
-      color: #888;
-      min-height: 1.5rem;
+    /* ── Developer / Level-editor panel ──────────────────── */
+    #dev-panel {
+      width: 100%;
+      max-width: 800px;
+      margin: 0.5rem auto 1.5rem;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.25rem 1.5rem;
+    }
+    #dev-panel h2 {
+      color: var(--accent);
+      font-size: 1rem;
+      margin-bottom: 0.5rem;
+    }
+    #dev-panel .sub {
+      color: var(--dim);
+      font-size: 0.82rem;
+      margin-bottom: 1rem;
     }
 
-    /* Developer / Level-editor panel */
-    details {
-      width: 640px;
-      max-width: 100vw;
-      margin: .5rem 0 1rem;
-      background: #1c1c1c;
-      border: 1px solid #333;
-      border-radius: 6px;
-      padding: .75rem 1rem;
+    .dev-section { margin-bottom: 1.1rem; }
+    .dev-section h3 {
+      font-size: 0.88rem;
+      color: #b0b090;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.3rem;
+      margin-bottom: 0.6rem;
     }
-    summary { cursor: pointer; font-weight: bold; }
-
     .dev-row {
       display: flex;
       align-items: center;
-      gap: .5rem;
-      margin-top: .75rem;
+      gap: 0.5rem;
+      margin: 0.45rem 0;
       flex-wrap: wrap;
     }
-    .dev-row label { min-width: 12rem; }
-
-    input[type=number], input[type=text] {
-      background: #2a2a2a;
-      border: 1px solid #444;
-      color: #eee;
-      padding: .3rem .5rem;
-      border-radius: 4px;
-      width: 6rem;
+    .dev-row label {
+      min-width: 160px;
+      font-size: 0.88rem;
+      color: #c8c8b0;
     }
-    input[type=text] { width: 20rem; }
-
-    button {
-      background: #333;
-      color: #eee;
-      border: 1px solid #555;
-      padding: .35rem .9rem;
+    input[type="text"], input[type="number"] {
+      background: #0a0a06;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.3rem 0.55rem;
       border-radius: 4px;
-      cursor: pointer;
+      font-size: 0.85rem;
     }
-    button:hover { background: #444; }
+    input[type="text"] { flex: 1; min-width: 200px; }
+    input[type="number"] { width: 5em; }
+    input[type="text"]:focus, input[type="number"]:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    code {
+      background: #0a0a06;
+      border: 1px solid var(--border);
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      font-size: 0.82rem;
+      color: var(--accent);
+      font-family: "SFMono-Regular", Consolas, monospace;
+    }
+    .dev-note {
+      font-size: 0.8rem;
+      color: var(--dim);
+      margin-top: 0.3rem;
+    }
+    .fence-status {
+      color: var(--dim);
+      font-size: 0.85em;
+    }
 
-    .toggle-row { margin-top: .75rem; display: flex; align-items: center; gap: .75rem; }
+    /* ── Footer ──────────────────────────────────────────── */
+    #footer {
+      text-align: center;
+      padding: 1.2rem;
+      color: var(--dim);
+      font-size: 0.78rem;
+      border-top: 1px solid var(--border);
+    }
+    #footer a { color: #7a7a60; text-decoration: none; }
+    #footer a:hover { color: var(--accent); }
   </style>
 </head>
 <body>
-  <header>
-    <h1>Mighty Mike</h1>
-    <p>WebAssembly build – for testing &amp; level development</p>
-  </header>
 
-  <div id="game-container">
-    <canvas id="canvas" width="640" height="480" oncontextmenu="event.preventDefault()"></canvas>
+  <!-- ══ Header ══════════════════════════════════════════════ -->
+  <div id="header">
+    <h1>🐜 Mighty Mike</h1>
+    <p>WebAssembly port — runs in your browser via Emscripten</p>
+  </div>
 
-    <div id="start-overlay">
-      <span>🎮</span>
-      <span>Click to start</span>
+  <!-- ══ Game area ══════════════════════════════════════════ -->
+  <div id="game-wrap">
+
+    <!-- Loading card (overlays the canvas until the game starts) -->
+    <div id="loading-card">
+      <img src="screenshot.png" alt="Mighty Mike" onerror="this.style.opacity='0'">
+      <div id="status-text">Initializing…</div>
+      <progress id="progress-bar" value="0" max="1"></progress>
+      <div id="progress-label">Downloading game data…</div>
+    </div>
+
+    <!-- WebGL canvas (always visible with real dimensions for SDL3 sizing) -->
+    <canvas id="canvas" width="640" height="480" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
+
+    <!-- Controls shown after load -->
+    <div id="toolbar">
+      <button class="btn" id="fullscreen-btn">⛶ Fullscreen</button>
     </div>
   </div>
 
-  <div style="display:flex; align-items:center; gap:.75rem; padding:.25rem 1rem;">
-    <div id="status" style="flex:1;">Loading…</div>
-    <button id="fullscreen-btn" title="Toggle fullscreen">⛶ Fullscreen</button>
+  <!-- ══ Developer / Level-editor panel ═══════════════════ -->
+  <div id="dev-panel">
+    <h2>🛠 Developer / Level-editor Tools</h2>
+    <p class="sub">
+      Use the controls below to jump to levels, override maps, and toggle cheats.
+      The game also accepts <code>?level=SCENE:AREA</code> and
+      <code>?mapOverride=PATH</code> URL params to skip menus on startup.
+    </p>
+
+    <!-- Level selection -->
+    <div class="dev-section">
+      <h3>Level Navigation</h3>
+      <div class="dev-row">
+        <label for="scene-input">Scene (0–4)</label>
+        <input type="number" id="scene-input" min="0" max="4" value="0" />
+      </div>
+      <div class="dev-row">
+        <label for="area-input">Area (0–2)</label>
+        <input type="number" id="area-input" min="0" max="2" value="0" />
+      </div>
+      <div class="dev-row">
+        <label for="map-override-input">Map override path</label>
+        <input type="text" id="map-override-input"
+               placeholder=":Maps:custom.map-1" />
+      </div>
+      <div class="dev-row">
+        <button class="btn" id="jump-btn">Jump to level</button>
+        <span class="dev-note">Reloads the page with ?level=&lt;scene&gt;:&lt;area&gt;</span>
+      </div>
+    </div>
+
+    <!-- Cheats -->
+    <div class="dev-section">
+      <h3>Cheats &amp; Debug</h3>
+      <div class="dev-row">
+        <label>Fence collisions</label>
+        <button class="btn on" id="fence-toggle">✓ Enabled</button>
+        <span id="fence-status" class="fence-status">unknown</span>
+      </div>
+    </div>
+
+    <!-- Quick reference -->
+    <div class="dev-section">
+      <h3>Quick Reference</h3>
+      <div class="dev-row"><code>?level=0:1</code> — skip to scene 0, area 1</div>
+      <div class="dev-row"><code>?mapOverride=:Maps:custom.map-1</code> — load a custom map file</div>
+      <div class="dev-row"><code>Cheat_SetFenceCollision(0)</code> — disable fence collisions</div>
+      <div class="dev-row"><code>Cheat_SetFenceCollision(1)</code> — re-enable fence collisions</div>
+    </div>
   </div>
 
-  <!-- ── Developer / Level-editor panel ── -->
-  <details id="dev-panel">
-    <summary>🛠 Developer / Level-editor tools</summary>
+  <!-- ══ Footer ═══════════════════════════════════════════ -->
+  <div id="footer">
+    <p>
+      Mighty Mike © 1995 Pangea Software, Inc. &nbsp;|&nbsp;
+      WebAssembly port:
+      <a href="https://github.com/LachlanBWWright/MightyMike-Android">LachlanBWWright/MightyMike-Android</a>
+      &nbsp;|&nbsp;
+      <a href="https://github.com/jorio/MightyMike">Original source: jorio/MightyMike</a>
+    </p>
+  </div>
 
-    <div class="dev-row">
-      <label for="scene-input">Scene (0–4)</label>
-      <input type="number" id="scene-input" min="0" max="4" value="0" />
-    </div>
-    <div class="dev-row">
-      <label for="area-input">Area (0–2)</label>
-      <input type="number" id="area-input" min="0" max="2" value="0" />
-    </div>
-    <div class="dev-row">
-      <label for="map-override-input">Map override path</label>
-      <input type="text" id="map-override-input"
-             placeholder=":Maps:custom.map-1" />
-    </div>
-    <div class="dev-row">
-      <button id="jump-btn">Jump to level</button>
-      <small style="color:#888">Reloads the page with ?level=&lt;scene&gt;:&lt;area&gt;</small>
-    </div>
-
-    <div class="toggle-row">
-      <label>Fence collisions</label>
-      <button id="fence-toggle">Enable</button>
-      <span id="fence-status" style="color:#aaa">unknown</span>
-    </div>
-  </details>
-
-  <!-- ── Emscripten runtime ── -->
+  <!-- ══ Emscripten Module config ═════════════════════════ -->
   <!--
     The CI/CD build produces MightyMike.js + MightyMike.wasm.
     If those files are not present (e.g. viewing this page standalone),
-    the placeholder below will keep the page functional without errors.
+    the page remains functional and shows a helpful error message.
   -->
   <script>
-    // ── Emscripten Module pre-config ──────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────
+    // KNOWN BROWSER WARNINGS (NOT ERRORS - GAME WORKS FINE)
+    // ─────────────────────────────────────────────────────────────────────────
+    // 1. ScriptProcessorNode deprecation warning:
+    //    This comes from SDL3's audio backend using deprecated Web Audio API.
+    //    The game's audio works correctly. SDL3 will migrate to AudioWorklet in
+    //    a future release. This is a cosmetic warning only.
+    //
+    // 2. Non-passive event listener warnings (wheel, touchstart, touchmove):
+    //    These come from SDL3's event handling code. They allow the game to
+    //    prevent default browser scrolling behavior. Modern best practice would
+    //    use passive listeners, but SDL3 needs to prevent defaults for game input.
+    //    These warnings don't affect functionality or performance.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // ── URL param parsing for level-editor integration ────
+    (function () {
+      var params = new URLSearchParams(window.location.search);
+      window._directLevel = params.get('level') || '';      // e.g. "0:1"
+      window._mapOverride = params.get('mapOverride') || ''; // e.g. ":Maps:custom.map-1"
+    })();
+
+    // ── Global error handler for WASM exceptions ────────────
+    window.addEventListener('error', function(e) {
+      console.error('[MightyMike] Unhandled error:', e.message, e.filename, e.lineno);
+    });
+    window.addEventListener('unhandledrejection', function(e) {
+      console.error('[MightyMike] Unhandled promise rejection:', e.reason);
+    });
+
+    var _fenceEnabled = true;
+
+    // ── Emscripten Module pre-config ──────────────────────
     var Module = {
       canvas: document.getElementById('canvas'),
 
+      // Request the high-performance (discrete/dedicated) GPU where available
+      webglContextAttributes: {
+        powerPreference: 'high-performance'
+      },
+
       print: function(text) {
-        console.log(text);
+        console.log('[MightyMike] ' + text);
       },
       printErr: function(text) {
-        console.warn(text);
+        console.warn('[MightyMike stderr] ' + text);
       },
+
+      onAbort: function(what) {
+        console.error('[MightyMike] ABORT: ' + what);
+        var el = document.getElementById('status-text');
+        if (el) el.textContent = 'Error: ' + what;
+        var card = document.getElementById('loading-card');
+        if (card) card.style.display = '';
+      },
+
+      onExit: function(code) {
+        if (code !== 0) {
+          console.error('[MightyMike] Exited with code: ' + code);
+          var el = document.getElementById('status-text');
+          if (el) el.textContent = 'Game exited with error (code ' + code + ')';
+          var card = document.getElementById('loading-card');
+          if (card) card.style.display = '';
+        }
+      },
+
+      onRuntimeInitialized: function() {
+        console.log('[MightyMike] Runtime initialized');
+        var el = document.getElementById('status-text');
+        if (el) el.textContent = 'Starting game…';
+
+        // Apply direct-boot params (safety net; Boot.cpp also reads URLSearchParams)
+        if (window._directLevel) {
+          var parts = window._directLevel.split(':');
+          if (parts.length === 2) {
+            try {
+              Module.ccall('Boot_SetDirectLevel', null,
+                ['number', 'number'], [parseInt(parts[0]), parseInt(parts[1])]);
+            } catch (e) { console.warn('Boot_SetDirectLevel not available:', e); }
+          }
+        }
+        if (window._mapOverride) {
+          try {
+            Module.ccall('Boot_SetCustomMapPath', null, ['string'], [window._mapOverride]);
+          } catch (e) { console.warn('Boot_SetCustomMapPath not available:', e); }
+        }
+
+        // Sync fence-collision toggle UI with current game state
+        refreshFenceStatus();
+      },
+
+      preRun: [function() {
+        // Create the config directory in the virtual filesystem
+        try { FS.mkdir('/home'); } catch (e) { /* ignore if exists */ }
+        try { FS.mkdir('/home/web_user'); } catch (e) { /* ignore if exists */ }
+        try { FS.mkdir('/home/web_user/.config'); } catch (e) { /* ignore if exists */ }
+        try { FS.mkdir('/home/web_user/.config/MightyMike'); } catch (e) { /* ignore if exists */ }
+      }],
+
       setStatus: function(text) {
-        document.getElementById('status').textContent = text || 'Running ▶';
+        var el      = document.getElementById('status-text');
+        var card    = document.getElementById('loading-card');
+        var canvas  = document.getElementById('canvas');
+        var toolbar = document.getElementById('toolbar');
+
+        if (text) {
+          if (el) el.textContent = text;
+        } else {
+          // Loading finished — hide the loading overlay, focus canvas
+          if (card)    card.style.display   = 'none';
+          if (canvas)  canvas.focus();
+          if (toolbar) toolbar.style.display = 'flex';
+        }
       },
-      totalDependencies: 0,
+
       monitorRunDependencies: function(left) {
-        this.totalDependencies = Math.max(this.totalDependencies, left);
-        Module.setStatus(left
-          ? 'Preparing… (' + (this.totalDependencies - left) + '/' + this.totalDependencies + ')'
-          : 'All downloads complete.');
-      }
-    };
-
-    // ── Click-to-start overlay (required by browsers for audio) ───────────
-    var overlay = document.getElementById('start-overlay');
-    overlay.addEventListener('click', function() {
-      overlay.classList.add('hidden');
-      // If the module hasn't started yet (slow download), load it now.
-      if (!window._moduleScriptLoaded) {
-        loadGameScript();
-      }
-    }, { once: true });
-
-    // ── Read URL query params and apply them once the module is ready ─────
-    var params = new URLSearchParams(window.location.search);
-    var directLevel = params.get('level');      // e.g. "0:1"
-    var mapOverride  = params.get('mapOverride'); // e.g. ":Maps:custom.map-1"
-
-    Module['onRuntimeInitialized'] = function() {
-      // Apply direct-boot params that were not consumed during C-side init
-      // (this path is a safety net; Boot.cpp already reads URLSearchParams).
-      if (directLevel) {
-        var parts = directLevel.split(':');
-        if (parts.length === 2) {
-          Module.ccall('Boot_SetDirectLevel', null,
-            ['number', 'number'], [parseInt(parts[0]), parseInt(parts[1])]);
+        var bar   = document.getElementById('progress-bar');
+        var label = document.getElementById('progress-label');
+        if (!bar) return;
+        if (left === 0) {
+          bar.value = 1;
+          if (label) label.textContent = 'Preparing…';
+          console.log('[MightyMike] All dependencies loaded');
+        } else {
+          bar.value = Math.max(0, 1 - (left * 0.02));
         }
       }
-      if (mapOverride) {
-        Module.ccall('Boot_SetCustomMapPath', null, ['string'], [mapOverride]);
-      }
-
-      // Sync fence-collision toggle UI with current game state
-      refreshFenceStatus();
     };
 
-    // ── Load the game script ──────────────────────────────────────────────
-    function loadGameScript() {
-      window._moduleScriptLoaded = true;
+    // ── Load the game script ──────────────────────────────
+    (function() {
       var s = document.createElement('script');
       s.src = 'MightyMike.js';
       s.onerror = function() {
-        document.getElementById('status').textContent =
+        var el = document.getElementById('status-text');
+        if (el) el.textContent =
           'MightyMike.js not found – make sure the WASM build artifacts are ' +
           'present in the same directory as this page.';
+        var label = document.getElementById('progress-label');
+        if (label) label.textContent = 'Build artifacts missing.';
       };
       document.body.appendChild(s);
+    })();
+
+    // ── UI helpers ────────────────────────────────────────
+
+    function refreshFenceStatus() {
+      if (!Module || !Module.ccall) return;
+      try {
+        var enabled = Module.ccall('Cheat_GetFenceCollision', 'number', [], []);
+        _fenceEnabled = !!enabled;
+        var btn = document.getElementById('fence-toggle');
+        var status = document.getElementById('fence-status');
+        if (btn) {
+          btn.textContent = _fenceEnabled ? '✓ Enabled' : '✗ Disabled';
+          btn.className   = 'btn' + (_fenceEnabled ? ' on' : ' danger');
+        }
+        if (status) {
+          status.textContent = _fenceEnabled ? 'enabled (default)' : 'DISABLED';
+        }
+      } catch (e) { console.warn('Cheat_GetFenceCollision not available:', e); }
     }
 
-    // Start loading immediately (audio context will only open after the click)
-    loadGameScript();
+    document.getElementById('fence-toggle').addEventListener('click', function() {
+      if (!Module || !Module.ccall) return;
+      _fenceEnabled = !_fenceEnabled;
+      try {
+        Module.ccall('Cheat_SetFenceCollision', null, ['number'], [_fenceEnabled ? 1 : 0]);
+      } catch (e) { console.warn('Module not ready yet:', e); }
+      refreshFenceStatus();
+    });
 
-    // ── Developer panel logic ─────────────────────────────────────────────
+    // ── Developer panel: Jump to level ────────────────────
     document.getElementById('jump-btn').addEventListener('click', function() {
-      var scene   = document.getElementById('scene-input').value;
-      var area    = document.getElementById('area-input').value;
-      var mapOvr  = document.getElementById('map-override-input').value.trim();
-      var url     = new URL(window.location.href);
+      var scene  = document.getElementById('scene-input').value;
+      var area   = document.getElementById('area-input').value;
+      var mapOvr = document.getElementById('map-override-input').value.trim();
+      var url    = new URL(window.location.href);
       url.searchParams.set('level', scene + ':' + area);
       if (mapOvr) {
         url.searchParams.set('mapOverride', mapOvr);
@@ -245,37 +487,21 @@
       window.location.href = url.toString();
     });
 
-    function refreshFenceStatus() {
-      if (!Module || !Module.ccall) return;
-      var enabled = Module.ccall('Cheat_GetFenceCollision', 'number', [], []);
-      document.getElementById('fence-status').textContent =
-        enabled ? 'enabled (default)' : 'DISABLED';
-      document.getElementById('fence-toggle').textContent =
-        enabled ? 'Disable' : 'Enable';
-    }
-
-    document.getElementById('fence-toggle').addEventListener('click', function() {
-      if (!Module || !Module.ccall) return;
-      var current = Module.ccall('Cheat_GetFenceCollision', 'number', [], []);
-      Module.ccall('Cheat_SetFenceCollision', null, ['number'], [current ? 0 : 1]);
-      refreshFenceStatus();
-    });
-
     // Pre-fill the dev panel from current URL params
-    if (directLevel) {
-      var p = directLevel.split(':');
+    if (window._directLevel) {
+      var p = window._directLevel.split(':');
       if (p.length === 2) {
         document.getElementById('scene-input').value = p[0];
         document.getElementById('area-input').value  = p[1];
       }
     }
-    if (mapOverride) {
-      document.getElementById('map-override-input').value = mapOverride;
+    if (window._mapOverride) {
+      document.getElementById('map-override-input').value = window._mapOverride;
     }
 
-    // ── Fullscreen button ─────────────────────────────────────────────────
+    // ── Fullscreen button ─────────────────────────────────
     document.getElementById('fullscreen-btn').addEventListener('click', function() {
-      var container = document.getElementById('game-container');
+      var container = document.getElementById('game-wrap');
       if (!document.fullscreenElement) {
         container.requestFullscreen().catch(function(err) {
           console.warn('Fullscreen error:', err);
