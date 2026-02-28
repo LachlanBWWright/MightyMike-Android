@@ -257,6 +257,8 @@ if(EMSCRIPTEN)
 
 	# Emscripten link flags:
 	#   ALLOW_MEMORY_GROWTH  – let the heap grow as needed
+	#   INITIAL_MEMORY       – 32 MB initial heap; the default 16 MB is too small
+	#                          because the embedded Data/ folder alone is ~15 MB
 	#   ASYNCIFY             – allows blocking C loops to yield back to the browser's
 	#                          event loop; required because the game uses tight
 	#                          while/do-while loops with SDL_Delay() instead of a
@@ -270,6 +272,7 @@ if(EMSCRIPTEN)
 	#   --embed-file – pack the game's Data folder into the wasm binary
 	target_link_options(${GAME_TARGET} PRIVATE
 		-sALLOW_MEMORY_GROWTH=1
+		-sINITIAL_MEMORY=33554432
 		-sMAXIMUM_MEMORY=512mb
 		-sASYNCIFY=1
 		-sASYNCIFY_STACK_SIZE=65536
