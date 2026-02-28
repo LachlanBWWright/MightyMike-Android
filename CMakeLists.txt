@@ -56,6 +56,17 @@ set(POMME_NO_QD3D		true)
 set(POMME_NO_VIDEO		true)
 add_compile_definitions(POMME_CASE_SENSITIVE_FSSPEC=1)
 
+# Enable C++ exception support for Emscripten using the JS-based mechanism
+# (-fexceptions) rather than native WASM exceptions (-fwasm-exceptions).
+# Native WASM exceptions are NOT compatible with ASYNCIFY, which this game
+# requires to yield the browser event loop from blocking C while-loops.
+# The -fexceptions flag must be set globally (before add_subdirectory calls)
+# so that all translation units — including Pomme — use the same ABI.
+if(EMSCRIPTEN)
+	add_compile_options(-fexceptions)
+	add_link_options(-fexceptions)
+endif()
+
 #------------------------------------------------------------------------------
 # FIND SDL
 #------------------------------------------------------------------------------
@@ -142,7 +153,9 @@ target_compile_definitions(${GAME_TARGET} PRIVATE
 
 if(NOT MSVC)
 	target_compile_options(${GAME_TARGET} PRIVATE
-		-fexceptions
+		# Skip -fexceptions for Emscripten: the global -fexceptions flag set
+		# above already provides C++ exception support for all targets.
+		$<$<NOT:$<BOOL:${EMSCRIPTEN}>>:-fexceptions>
 		-Wall
 		-Wextra
 		-Wshadow
@@ -248,6 +261,10 @@ if(EMSCRIPTEN)
 	#                          event loop; required because the game uses tight
 	#                          while/do-while loops with SDL_Delay() instead of a
 	#                          callback-based main loop
+	#   ASYNCIFY_STACK_SIZE  – increase stack for asyncify (default 4096 is too small
+	#                          for complex game loops with nested calls)
+	#   DISABLE_EXCEPTION_CATCHING – enable JS-based C++ exception support (compatible
+	#                          with ASYNCIFY; unlike -fwasm-exceptions which is NOT)
 	#   EXPORTED_RUNTIME_METHODS / EXPORTED_FUNCTIONS – expose ccall/cwrap and
 	#     our cheat/boot helpers to JavaScript
 	#   --embed-file – pack the game's Data folder into the wasm binary
@@ -255,7 +272,9 @@ if(EMSCRIPTEN)
 		-sALLOW_MEMORY_GROWTH=1
 		-sMAXIMUM_MEMORY=512mb
 		-sASYNCIFY=1
+		-sASYNCIFY_STACK_SIZE=65536
 		"-sASYNCIFY_IMPORTS=['SDL_Delay','emscripten_sleep']"
+		-sDISABLE_EXCEPTION_CATCHING=0
 		"-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap']"
 		"-sEXPORTED_FUNCTIONS=['_main','_Boot_SetDirectLevel','_Boot_SetCustomMapPath','_Cheat_SetFenceCollision','_Cheat_GetFenceCollision']"
 		"--embed-file=${GAME_DATADIR}@/Data"
