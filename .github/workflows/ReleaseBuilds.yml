@@ -9,8 +9,6 @@ on:
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 jobs:
   build-linux-appimage:
@@ -145,37 +143,6 @@ jobs:
           name: ${{env.ARTIFACT_NAME}}
           path: dist/
           compression-level: 0
-
-      # ── Prepare GitHub Pages deployment ──────────────────────────────────
-      - name: Prepare Pages artifact
-        run: |
-          mkdir -p pages-deploy
-          # Copy the landing page
-          cp docs/index.html pages-deploy/
-          # Unzip the WASM bundle into the pages deployment directory
-          unzip -o dist/$ARTIFACT_NAME -d pages-deploy-tmp
-          # The zip contains a sub-folder; flatten it one level
-          find pages-deploy-tmp -maxdepth 2 \( -name "*.js" -o -name "*.wasm" \) \
-            -exec cp {} pages-deploy/ \;
-          rm -rf pages-deploy-tmp
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: pages-deploy
-
-  # ── Deploy GitHub Pages ───────────────────────────────────────────────────
-  deploy-pages:
-    name: Deploy to GitHub Pages
-    needs: build-wasm
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
 
   # ── Create / update GitHub Release with all build artifacts ──────────────
   release:
