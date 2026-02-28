@@ -30,9 +30,9 @@ jobs:
         uses: actions/configure-pages@v5
 
       # Install Emscripten SDK via git clone to avoid emsdk-update network failures.
-      # mymindstorm/setup-emsdk always calls 'emsdk update' on cache miss (due to a
-      # JS bug where update:"false" is a truthy string), and that download fails with
-      # "Remote end closed connection without response".
+      # The mymindstorm/setup-emsdk action always calls 'emsdk update' on cache miss
+      # (due to a bug in the action's implementation where update:"false" is a truthy
+      # string), and that download can fail with network errors.
       - name: Cache Emscripten SDK
         id: cache-emsdk
         uses: actions/cache@v4

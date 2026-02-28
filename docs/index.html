@@ -186,6 +186,10 @@
       color: var(--dim);
       margin-top: 0.3rem;
     }
+    .fence-status {
+      color: var(--dim);
+      font-size: 0.85em;
+    }
 
     /* ── Footer ──────────────────────────────────────────── */
     #footer {
@@ -213,7 +217,7 @@
     <!-- Loading card (overlays the canvas until the game starts) -->
     <div id="loading-card">
       <img src="screenshot.png" alt="Mighty Mike" onerror="this.style.opacity='0'">
-      <div id="status-text">Initialising…</div>
+      <div id="status-text">Initializing…</div>
       <progress id="progress-bar" value="0" max="1"></progress>
       <div id="progress-label">Downloading game data…</div>
     </div>
@@ -264,7 +268,7 @@
       <div class="dev-row">
         <label>Fence collisions</label>
         <button class="btn on" id="fence-toggle">✓ Enabled</button>
-        <span id="fence-status" style="color:var(--dim); font-size:0.85em">unknown</span>
+        <span id="fence-status" class="fence-status">unknown</span>
       </div>
     </div>
 
